@@ -1,0 +1,20 @@
+# Build-Ausgabe (wird beim Bauen neu erzeugt)
+bin/
+*.prg
+*.iq
+*.prg.debug.xml
+
+# Developer Key - niemals hochladen!
+*.der
+*.pem
+developer_key*
+
+# Eigene Schlaf-/Testdaten bleiben lokal
+logs/
+*.fit
+*.csv
+
+# Editor / System
+.vscode/settings.json
+Thumbs.db
+desktop.ini
