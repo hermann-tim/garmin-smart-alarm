@@ -1,5 +1,6 @@
 import Toybox.Application;
 import Toybox.Lang;
+import Toybox.System;
 import Toybox.Timer;
 import Toybox.WatchUi;
 
@@ -23,6 +24,7 @@ class NightSession {
     var engine as SleepEngine or Null = null;
     var player as AlarmPlayer;
     var overlayOpen as Boolean = false;   // exit dialog shown above the night screen
+    var screenUntil as Number = 0;        // night screen shows its content until then (System.getTimer), then black
 
     private var _settings as AppSettings;
     private var _timer as Timer.Timer;
@@ -209,6 +211,12 @@ class NightSession {
         persist();
         player.start(_settings.vibeLevel, _settings.toneOn, 1);
         WatchUi.switchToView(new AlarmView(self, player, false), new AlarmDelegate(self), WatchUi.SLIDE_IMMEDIATE);
+    }
+
+    // Show the night screen for 20 seconds, afterwards it goes black.
+    function showScreen() as Void {
+        screenUntil = System.getTimer() + 20000;
+        WatchUi.requestUpdate();
     }
 
     function canSnooze() as Boolean {

@@ -1,9 +1,12 @@
 import Toybox.Graphics;
 import Toybox.Lang;
+import Toybox.System;
 import Toybox.WatchUi;
 
 // Night screen: very dim. Shows the time, the wake time and a ring from
 // "start" (top) clockwise to the wake time, with the wake window in orange.
+// After 20 seconds it turns completely black (on this display black pixels
+// give no light at all), a button press shows it again.
 class NightView extends WatchUi.View {
 
     private var _s as NightSession;
@@ -13,8 +16,15 @@ class NightView extends WatchUi.View {
         _s = session;
     }
 
+    function onShow() as Void {
+        _s.showScreen();
+    }
+
     function onUpdate(dc as Dc) as Void {
         Ui.clear(dc);
+        if (System.getTimer() > _s.screenUntil) {
+            return;
+        }
         var s = _s;
         var cx = dc.getWidth() / 2;
         var cy = dc.getHeight() / 2;
@@ -84,24 +94,30 @@ class NightDelegate extends WatchUi.BehaviorDelegate {
         }
     }
 
-    // Everything else is ignored, so nothing happens by accident at night.
+    // Every other button only shows the screen again for a moment,
+    // so nothing happens by accident at night.
     function onSelect() as Boolean {
+        _s.showScreen();
         return true;
     }
 
     function onMenu() as Boolean {
+        _s.showScreen();
         return true;
     }
 
     function onNextPage() as Boolean {
+        _s.showScreen();
         return true;
     }
 
     function onPreviousPage() as Boolean {
+        _s.showScreen();
         return true;
     }
 
     function onTap(evt as WatchUi.ClickEvent) as Boolean {
+        _s.showScreen();
         return true;
     }
 }
