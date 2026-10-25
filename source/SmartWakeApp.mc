@@ -6,15 +6,18 @@ import Toybox.WatchUi;
 class SmartWakeApp extends Application.AppBase {
 
     var settings as AppSettings;
+    var model as SleepModel;     // what SmartWake has learned about your sleep
     var session as NightSession or Null = null;
 
     function initialize() {
         AppBase.initialize();
         settings = new AppSettings();
+        model = new SleepModel();
     }
 
     function onStart(state as Dictionary?) as Void {
         settings.load();
+        model.load();
     }
 
     // The app is closing. Sensors and timers stop, but a running night stays

@@ -45,12 +45,7 @@ class HomeView extends WatchUi.View {
         } else if (wake > 1435) {
             wake = 1435;
         }
-        // The next time the clock shows this wake time: today if it is still ahead, otherwise tomorrow.
-        var mid = TimeUtil.midnightOf(now);
-        var dl = TimeUtil.atMinuteOfDay(mid, wake);
-        if (dl <= now + 60) {
-            dl = TimeUtil.atMinuteOfDay(TimeUtil.midnightOf(mid + 36 * 3600), wake);
-        }
+        var dl = TimeUtil.nextOccurrence(wake, now);
         return [dl, TimeUtil.weekdayIndex(dl), wake, planMin];
     }
 

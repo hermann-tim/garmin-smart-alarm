@@ -14,10 +14,23 @@ Gebaut mit Connect IQ (Monkey C).
    - **HRV** (Abstände zwischen einzelnen Herzschlägen)
    - **Garmins Stress-Wert** (live, ebenfalls aus der HRV berechnet)
    - **Atemfrequenz** und wie gleichmäßig sie ist
-3. Jede Minute bewertet sie daraus, wie leicht du gerade schläfst. Alle Werte werden mit **deinen eigenen Werten aus derselben Nacht** verglichen, nicht mit festen Grenzen.
+   - **dein Schlafzyklus:** wann der nächste Wechsel zwischen zwei Zyklen fällig ist
+3. Jede Minute bewertet sie daraus, wie leicht du gerade schläfst. Alle Werte werden mit **deinen eigenen Normalwerten** verglichen, nicht mit festen Grenzen.
 4. Im **Weckfenster** (z. B. 30 Minuten vor der Weckzeit) weckt sie dich, sobald es nach leichtem Schlaf aussieht. Gegen Ende des Fensters reicht ein schwächeres Signal. Spätestens zur Weckzeit klingelt es immer.
 5. Der Alarm startet sanft und wird stärker: längere Vibrationen, kürzere Pausen und auf Wunsch Töne.
-6. Morgens zeigt ein Bericht, wann und warum du geweckt wurdest, deinen Schlafverlauf, Messwerte und den Ablauf der Nacht.
+6. Nach dem Ausschalten fragt die App: **Wie fühlst du dich?** (fit / okay / müde).
+7. Morgens zeigt ein Bericht, wann und warum du geweckt wurdest, deinen Schlafverlauf, Messwerte und den Ablauf der Nacht.
+
+## Lernt mit jeder Nacht
+
+SmartWake merkt sich die **letzten 21 Nächte** als kurze Zusammenfassungen (keine Rohdaten, zusammen nur wenige Kilobyte):
+
+- **Deine Normalwerte:** Ruhepuls, HRV, Stress, Atmung, typischer Pulsanstieg im leichten Schlaf und deine persönliche Zykluslänge. Neue Nächte zählen am meisten, die ersten Nächte besonders stark. So ist das Profil nach etwa 5 Nächten persönlich.
+- **Gewichtung der Signale:** Warst du nach einem frühen Wecken fit, zählen die Signale, die den Ausschlag gaben, künftig mehr. Warst du müde, zählen sie weniger.
+- **Strenge:** Früh geweckt und müde: SmartWake wird vorsichtiger. Zur Weckzeit geweckt und müde: SmartWake weckt eher früher. Ohne Antwort zählt häufiges Schlummern als Hinweis.
+- **Schutz vor Ausreißern:** Nächte mit stark erhöhtem Ruhepuls (Alkohol, Krankheit, spätes Training) werden nicht gelernt. Ebenso Nächte unter 3 Stunden (Mittagsschlaf, Tests).
+
+Was gelernt wurde, zeigt **Menü → Schlafprofil**. Mit **Lernen zurücksetzen** fängt das Profil von vorne an.
 
 Garmins eigene Schlafphasen sind für Apps nicht zugänglich. SmartWake schätzt die Phasen deshalb selbst. Das ist eine Schätzung, keine medizinische Messung.
 
@@ -58,12 +71,25 @@ Garmins eigene Schlafphasen sind für Apps nicht zugänglich. SmartWake schätzt
 ```
 source/
   SmartWakeApp.mc     Einstieg, setzt eine laufende Nacht nach einem Neustart fort
-  SleepEngine.mc      Sensoren auslesen, Schlaf bewerten, Weckzeitpunkt finden
+  SleepEngine.mc      Sensoren auslesen, Schlaf bewerten, Zyklen erkennen, Weckzeitpunkt finden
+  SleepModel.mc       Lern-Gedächtnis über 21 Nächte: Normalwerte, Gewichte, Strenge
   NightSession.mc     Ablauf einer Nacht: Messen, Alarm, Schlummern, Bericht
   AlarmPlayer.mc      Ansteigender Alarm aus Vibration, Licht und Ton
   AppSettings.mc      Einstellungen und Wochenplan
-  *View.mc            Bildschirme (Start, Nacht, Alarm, Schlummern, Bericht, Regler ...)
+  FeedbackView.mc     Morgenfrage "Wie fühlst du dich?" und Lernschritt
+  ProfileView.mc      Schlafprofil: was gelernt wurde
+  *View.mc            weitere Bildschirme (Start, Nacht, Alarm, Schlummern, Bericht, Regler ...)
   SettingsMenu.mc     Einstellungsmenü
   Ui.mc, TimeUtil.mc  Farben, Zeichen-Helfer, Zeitfunktionen
-  DebugTools.mc       Demo-Nacht und Demo-Bericht (nur in Debug-Builds)
+  DebugTools.mc       Demo-Nacht, Demo-Bericht, Demo-Lernen (nur in Debug-Builds)
+  Tests.mc            Unit-Tests für Zeitlogik, Lernen und Schlaf-Engine
 ```
+
+## Tests ausführen
+
+```
+monkeyc -f monkey.jungle -d fr265 -o bin/SmartWake-test.prg -y <developer_key> --unit-test
+monkeydo bin/SmartWake-test.prg fr265 /t
+```
+
+Der Simulator muss dafür laufen.

@@ -18,9 +18,15 @@ function openSettings() as Void {
     menu.addItem(new WatchUi.MenuItem("Empfindlichkeit", s.sensLabel(), :sens, null));
     menu.addItem(new WatchUi.MenuItem("Wecker testen", "Alarm jetzt ausprobieren", :test, null));
     menu.addItem(new WatchUi.MenuItem("Letzte Nacht", lastNightLabel(), :last, null));
+    menu.addItem(new WatchUi.MenuItem("Schlafprofil", profileLabel(), :profile, null));
+    menu.addItem(new WatchUi.MenuItem("Lernen zurücksetzen", "Profil löschen", :resetModel, null));
     menu.addItem(new WatchUi.MenuItem("So funktioniert's", null, :help, null));
     addDebugItems(menu);
     WatchUi.pushView(menu, new SettingsDelegate(menu), WatchUi.SLIDE_UP);
+}
+
+function profileLabel() as String {
+    return getApp().model.storedNights().format("%d") + " von 21 Nächten gelernt";
 }
 
 function lastNightLabel() as String {
@@ -86,8 +92,22 @@ class SettingsDelegate extends WatchUi.Menu2InputDelegate {
         } else if (id == :help) {
             var help = new HelpView();
             WatchUi.pushView(help, new HelpDelegate(help), WatchUi.SLIDE_LEFT);
+        } else if (id == :profile) {
+            var pv = new ProfileView();
+            WatchUi.pushView(pv, new ProfileDelegate(pv), WatchUi.SLIDE_LEFT);
+        } else if (id == :resetModel) {
+            var cv = new ConfirmView("Profil löschen?", "Alles Gelernte geht verloren.", "LÖSCHEN", "ABBRECHEN");
+            WatchUi.pushView(cv, new ConfirmDelegate(method(:onResetAnswer)), WatchUi.SLIDE_IMMEDIATE);
         } else {
             handleDebugItem(id);
+        }
+    }
+
+    function onResetAnswer(yes as Boolean) as Void {
+        WatchUi.popView(WatchUi.SLIDE_IMMEDIATE);
+        if (yes) {
+            getApp().model.reset();
+            refresh();
         }
     }
 
@@ -117,6 +137,7 @@ class SettingsDelegate extends WatchUi.Menu2InputDelegate {
         setSub(:snoozeMax, s.snoozeMax.format("%d") + " mal");
         setSub(:vibe, s.vibeLabel());
         setSub(:sens, s.sensLabel());
+        setSub(:profile, profileLabel());
         WatchUi.requestUpdate();
     }
 

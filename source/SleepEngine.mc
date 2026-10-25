@@ -20,15 +20,12 @@ const REASON_CANCEL = 5;
 // Reads the watch sensors through the night, rates every minute how light the
 // sleep looks and decides when it is a good moment to wake up.
 //
-// Signals used:
-//   - movement (accelerometer, 10 Hz)
-//   - heart rate (1 Hz) compared to tonight's resting level
-//   - heart rate steadiness over the last minutes
-//   - HRV (RMSSD from beat-to-beat intervals)
-//   - Garmin's live stress score (also based on HRV)
-//   - breathing rate steadiness
-// Every signal is compared to the user's own values from the same night,
-// so no fixed thresholds have to fit everybody.
+// Signals (see COMP_* in SleepModel.mc):
+//   movement, heart rate above resting level, heart rate unrest, HRV,
+//   Garmin's live stress score, breathing, and the personal sleep cycle.
+// Each signal is compared to the user's normal values: learned from earlier
+// nights at first, then more and more from this night itself. How much each
+// signal counts is learned from the morning feedback (SleepModel).
 class SleepEngine {
 
     const EPOCH = 60;         // seconds per analysis step
@@ -46,6 +43,16 @@ class SleepEngine {
     private var _deadline as Number = 0;
     private var _sens as Number = 3;
     private var _rate as Number = 10;
+
+    // Learned profile from earlier nights (-1 = not known yet)
+    private var _weights as Array<Float>;
+    private var _priorHr as Float;
+    private var _priorRm as Float;
+    private var _priorSt as Float;
+    private var _priorRr as Float;
+    private var _lightHr as Float;
+    private var _cycle as Float;
+    private var _shift as Float;
 
     // Running minute
     private var _epochStart as Number = 0;
@@ -74,7 +81,7 @@ class SleepEngine {
     private var _rrHist as Array<Float> = [-1.0, -1.0, -1.0, -1.0, -1.0];
     private var _prevLight as Number = 0;
 
-    // Distributions over the night (101 bins) = personal baselines
+    // Distributions over the night (101 bins) = this night's normal values
     private var _hHr as Array<Number>;
     private var _hRm as Array<Number>;
     private var _hSt as Array<Number>;
@@ -99,12 +106,23 @@ class SleepEngine {
     private var _logHr as Array<Number>;
     private var _logMove as Array<Number>;
 
+    // Falling asleep and sleep cycles
+    private var _onset as Number = -1;          // minute index where sleep began
+    private var _calmRun as Number = 0;
+    private var _lastBoundary as Number = -1;   // minute index of the last cycle change
+    private var _cycSum as Number = 0;
+    private var _cycN as Number = 0;
+
+    // Signals of the last minute and at the wake-up moment
+    private var _lastComps as Array<Float>;
+    private var _wakeComps as Array<Float> or Null = null;
+
     // Wake decision
     private var _armed as Boolean = false;
     private var _pendingKind as Number = -1;
     private var _pendingText as String = "";
 
-    function initialize() {
+    function initialize(model as SleepModel) {
         _hHr = zeros(101);
         _hRm = zeros(101);
         _hSt = zeros(101);
@@ -113,14 +131,31 @@ class SleepEngine {
         _logStage = new Array<Number>[MAX_EPOCHS];
         _logHr = new Array<Number>[MAX_EPOCHS];
         _logMove = new Array<Number>[MAX_EPOCHS];
+        _weights = new Array<Float>[COMP_COUNT];
+        for (var k = 0; k < COMP_COUNT; k++) {
+            _weights[k] = model.weights[k];
+        }
+        _priorHr = model.minHr;
+        _priorRm = model.rmssd;
+        _priorSt = model.stress;
+        _priorRr = model.resp;
+        _lightHr = model.lightHr;
+        _cycle = model.cycleMin;
+        _shift = model.shift;
+        _lastComps = missingComps();
     }
 
-    function start(now as Number, windowStart as Number, deadline as Number, sensitivity as Number) as Void {
+    // Set up the night without touching the sensors (also used by the tests).
+    function setup(now as Number, windowStart as Number, deadline as Number, sensitivity as Number) as Void {
         _start = now;
         _windowStart = windowStart;
         _deadline = deadline;
         _sens = sensitivity;
         _epochStart = now;
+    }
+
+    function start(now as Number, windowStart as Number, deadline as Number, sensitivity as Number) as Void {
+        setup(now, windowStart, deadline, sensitivity);
         _bbStart = readBodyBattery();
         enableSensors();
     }
@@ -283,7 +318,9 @@ class SleepEngine {
         _act += chunk;
         // A clear movement inside the wake window wakes you right away.
         if (_armed && _pendingKind < 0 && chunk >= chunkLimit()) {
-            setPending(REASON_MOVEMENT, "Bewegung im Weckfenster");
+            var c = copyComps(_lastComps);
+            c[COMP_MOVE] = 1.0;
+            setPending(REASON_MOVEMENT, "Bewegung im Weckfenster", c);
         }
     }
 
@@ -351,6 +388,7 @@ class SleepEngine {
     }
 
     private function closeEpoch(endSec as Number) as Void {
+        var idx = epochs;
         var m = motionScore(_act);
         var hr = (_hrN > 0) ? _hrSum.toFloat() / _hrN : -1.0;
         var rm = (_ibiN >= 15) ? Math.sqrt(_ibiSq / _ibiN).toFloat() : -1.0;
@@ -361,7 +399,7 @@ class SleepEngine {
         _hrHist = [hr, _hrHist[0], _hrHist[1], _hrHist[2]];
         _rrHist = [rr, _rrHist[0], _rrHist[1], _rrHist[2], _rrHist[3]];
 
-        // Learn personal baselines from calm minutes only.
+        // This night's normal values come from calm minutes only.
         if (m < 0.45) {
             if (hr > 0.0) {
                 _nHr += addBin(_hHr, (hr + 0.5).toNumber() - 30);
@@ -386,62 +424,59 @@ class SleepEngine {
             _cntRr += 1;
         }
 
-        // How light does the sleep look? 0 = very deep, 100 = awake.
-        // Every signal gives 0..1, missing signals are left out.
-        var w = 0.0;
-        var sum = 0.0;
-
-        var cMove = maxf(m, maxf(0.6 * _mHist[1], 0.35 * _mHist[2]));
-        w += 0.38;
-        sum += 0.38 * cMove;
+        // Every signal gives 0..1 (1 = looks like light sleep), -1 = not available.
+        var c = missingComps();
+        c[COMP_MOVE] = maxf(m, maxf(0.6 * _mHist[1], 0.35 * _mHist[2]));
 
         var hrElev = 0.0;
-        var cHr = 0.0;
-        if (hr > 0.0 && _nHr >= 10) {
-            hrElev = hr - (percentile(_hHr, _nHr, 10) + 30);
-            cHr = clamp01((hrElev - 1.5) / 8.0);
-            w += 0.20;
-            sum += 0.20 * cHr;
+        var hrBase = blend((_nHr >= 10) ? percentile(_hHr, _nHr, 10) + 30.0 : -1.0, _priorHr, _nHr);
+        if (hr > 0.0 && hrBase > 0.0) {
+            hrElev = hr - hrBase;
+            // centred on the user's typical heart rate rise in light sleep
+            c[COMP_HR] = sigmoid((hrElev - _lightHr) * 0.8);
         }
 
-        var cVar = 0.0;
         var hrDelta = meanAbsDelta(_hrHist);
         if (hrDelta >= 0.0) {
-            cVar = clamp01((hrDelta - 0.6) / 3.0);
-            w += 0.12;
-            sum += 0.12 * cVar;
+            c[COMP_UNREST] = clamp01((hrDelta - 0.6) / 3.0);
         }
 
-        var cHrv = 0.0;
-        if (rm > 0.0 && _nRm >= 10) {
-            var med = percentile(_hRm, _nRm, 50) * 2.0 + 1.0;
-            cHrv = clamp01((med / maxf(rm, 5.0) - 1.0) / 0.8);
-            w += 0.12;
-            sum += 0.12 * cHrv;
+        var rmBase = blend((_nRm >= 10) ? percentile(_hRm, _nRm, 50) * 2.0 + 1.0 : -1.0, _priorRm, _nRm);
+        if (rm > 0.0 && rmBase > 0.0) {
+            c[COMP_HRV] = clamp01((rmBase / maxf(rm, 5.0) - 1.0) / 0.8);
         }
 
-        var cSt = 0.0;
-        if (st >= 0.0 && _nSt >= 10) {
-            cSt = clamp01((st - percentile(_hSt, _nSt, 50) - 3.0) / 20.0);
-            w += 0.12;
-            sum += 0.12 * cSt;
+        var stBase = blend((_nSt >= 10) ? percentile(_hSt, _nSt, 50).toFloat() : -1.0, _priorSt, _nSt);
+        if (st >= 0.0 && stBase >= 0.0) {
+            c[COMP_STRESS] = clamp01((st - stBase - 3.0) / 20.0);
         }
 
-        var cRr = 0.0;
         var rrVar = stdDev(_rrHist);
+        var resp = -1.0;
         if (rrVar >= 0.0) {
-            cRr = clamp01((rrVar - 0.4) / 2.0);
-            w += 0.06;
-            sum += 0.06 * cRr;
+            resp = clamp01((rrVar - 0.4) / 2.0);
+        }
+        if (rr > 0.0 && _priorRr > 0.0) {
+            resp = maxf(resp, clamp01((rr - _priorRr - 0.5) / 2.0));
+        }
+        c[COMP_RESP] = resp;
+
+        // Where are we in the personal sleep cycle? 1 = a cycle change is due.
+        if (_onset >= 0 && _lastBoundary >= 0) {
+            var phase = (idx - _lastBoundary).toFloat() / _cycle;
+            c[COMP_CYCLE] = (0.5 * (1.0 + Math.cos(2.0 * Math.PI * phase))).toFloat();
         }
 
-        var light = (100.0 * sum / w + 0.5).toNumber();
+        // How light does the sleep look? 0 = very deep, 100 = awake.
+        // "light" uses all signals, "body" only the body signals (without the cycle clock).
+        var light = score(c, -1);
+        var body = score(c, COMP_CYCLE);
 
-        // Stage estimate for the night log
+        // Stage estimate for the night log: from body signals only
         var stage = STAGE_LIGHT;
         if ((m >= 0.8 && (_mHist[1] >= 0.45 || hrElev >= 12.0)) || (hrElev >= 15.0 && m >= 0.2)) {
             stage = STAGE_WAKE;
-        } else if (endSec - _start >= MIN_SLEEP && m < 0.05 && hrElev < 4.0 && light <= deepLimit()) {
+        } else if (endSec - _start >= MIN_SLEEP && m < 0.05 && hrElev < 4.0 && body <= deepLimit()) {
             // Only after the first 20 minutes: before that, lying still may simply mean being awake.
             stage = STAGE_DEEP;
         }
@@ -449,17 +484,19 @@ class SleepEngine {
             _nLight += addBin(_hLight, light);
         }
 
-        if (epochs < MAX_EPOCHS) {
-            _logLight[epochs] = light;
-            _logStage[epochs] = stage;
-            _logHr[epochs] = (hr > 0.0) ? (hr + 0.5).toNumber() : 0;
-            _logMove[epochs] = (m * 100.0).toNumber();
+        if (idx < MAX_EPOCHS) {
+            _logLight[idx] = light;
+            _logStage[idx] = stage;
+            _logHr[idx] = (hr > 0.0) ? (hr + 0.5).toNumber() : 0;
+            _logMove[idx] = (m * 100.0).toNumber();
             epochs += 1;
         }
+        trackCycles(idx, m, hrElev, stage);
         stageNow = stage;
+        _lastComps = c;
 
         if (_pendingKind < 0 && smartAllowed(endSec)) {
-            decide(endSec, light, m, stage, [cMove, cHr, cVar, cHrv, cSt, cRr]);
+            decide(endSec, light, body, m, stage, c);
         }
         _prevLight = light;
 
@@ -474,44 +511,76 @@ class SleepEngine {
         _rrN = 0;
     }
 
-    // Is now a good moment to wake up?
-    private function decide(t as Number, light as Number, m as Float, stage as Number, parts as Array<Float>) as Void {
-        if (stage == STAGE_WAKE) {
-            setPending(REASON_AWAKE, "Du warst schon wach");
+    // Finds the moment of falling asleep and the changes between sleep cycles.
+    // A cycle change shows as movement plus a heart rate rise, 70-115 minutes
+    // after the last one. If none shows up, it is assumed where it was expected,
+    // so the cycle clock stays in step instead of drifting.
+    private function trackCycles(idx as Number, m as Float, hrElev as Float, stage as Number) as Void {
+        if (_onset < 0) {
+            if (stage != STAGE_WAKE && m < 0.2) {
+                _calmRun += 1;
+            } else {
+                _calmRun = 0;
+            }
+            if (_calmRun >= 10) {
+                _onset = idx - 9;
+                _lastBoundary = _onset;
+            }
             return;
         }
-        if (m >= moveLimit()) {
-            setPending(REASON_MOVEMENT, "Bewegung im Leichtschlaf");
-            return;
-        }
-        // Compare with this night's own values. Later in the window it gets easier.
-        var limit = lightLimit();
-        var span = _deadline - _windowStart;
-        var progress = (span > 0) ? (t - _windowStart).toFloat() / span : 1.0;
-        limit = limit * (1.0 - 0.35 * clamp01(progress));
-        if (light >= limit && _prevLight >= limit * 0.85) {
-            setPending(REASON_LIGHT, "Leichtschlaf: " + signals(parts));
-            return;
-        }
-        if (_deadline - t <= 300 && stage != STAGE_DEEP && light >= limit * 0.6) {
-            setPending(REASON_LATE, "Kein Tiefschlaf kurz vor der Weckzeit");
+        var since = idx - _lastBoundary;
+        if (since >= 70 && ((m >= 0.45 && hrElev >= 3.0) || stage == STAGE_WAKE)) {
+            if (since <= 115) {
+                _cycSum += since;
+                _cycN += 1;
+            }
+            _lastBoundary = idx;
+        } else if (since >= 115) {
+            _lastBoundary += (_cycle + 0.5).toNumber();
         }
     }
 
-    private function signals(parts as Array<Float>) as String {
-        var names = ["Bewegung", "Puls höher", "Puls unruhig", "HRV niedriger", "Stress höher", "Atmung unruhig"];
-        var vals = new Array<Float>[parts.size()];
-        for (var i = 0; i < parts.size(); i++) {
-            vals[i] = parts[i];
+    // Is now a good moment to wake up?
+    private function decide(t as Number, light as Number, body as Number, m as Float, stage as Number, c as Array<Float>) as Void {
+        if (stage == STAGE_WAKE) {
+            setPending(REASON_AWAKE, "Du warst schon wach", c);
+            return;
+        }
+        if (m >= moveLimit()) {
+            setPending(REASON_MOVEMENT, "Bewegung im Leichtschlaf", c);
+            return;
+        }
+        // Compare with this night's own values. Towards the wake time it gets easier,
+        // slowly at first and faster at the end.
+        var limit = lightLimit();
+        var span = _deadline - _windowStart;
+        var progress = (span > 0) ? clamp01((t - _windowStart).toFloat() / span) : 1.0;
+        limit = limit * (1.0 - 0.35 * Math.pow(progress, 1.5).toFloat());
+        // The cycle clock may tip the balance, but the body has to show something too.
+        if (light >= limit && _prevLight >= limit * 0.85 && body >= 15) {
+            setPending(REASON_LIGHT, "Leichtschlaf: " + signals(c), c);
+            return;
+        }
+        if (_deadline - t <= 300 && stage != STAGE_DEEP && light >= limit * 0.6) {
+            setPending(REASON_LATE, "Kein Tiefschlaf kurz vor der Weckzeit", c);
+        }
+    }
+
+    // The two signals that contributed most, for the wake-up reason.
+    private function signals(c as Array<Float>) as String {
+        var names = ["Bewegung", "Puls höher", "Puls unruhig", "HRV niedriger", "Stress höher", "Atmung unruhig", "Zyklus-Ende"];
+        var vals = new Array<Float>[COMP_COUNT];
+        for (var k = 0; k < COMP_COUNT; k++) {
+            vals[k] = (c[k] >= 0.3) ? c[k] * _weights[k] : 0.0;
         }
         var out = "";
-        for (var k = 0; k < 2; k++) {
+        for (var n = 0; n < 2; n++) {
             var best = -1;
-            var bestVal = 0.3;
-            for (var i = 0; i < vals.size(); i++) {
-                if (vals[i] > bestVal) {
-                    best = i;
-                    bestVal = vals[i];
+            var bestVal = 0.0;
+            for (var k = 0; k < COMP_COUNT; k++) {
+                if (vals[k] > bestVal) {
+                    best = k;
+                    bestVal = vals[k];
                 }
             }
             if (best >= 0) {
@@ -525,16 +594,23 @@ class SleepEngine {
         return (out.length() > 0) ? out : "viele kleine Signale";
     }
 
-    // Limits depend on the sensitivity setting (1 = careful ... 5 = early).
+    // Limits depend on the sensitivity setting (1 = careful ... 5 = early)
+    // plus the learned shift from the morning feedback.
     private function lightLimit() as Float {
-        var base = 40.0 - 4.0 * (_sens - 3);
+        var pct = [85, 78, 70, 62, 55][_sens - 1] + _shift;
+        if (pct < 45.0) {
+            pct = 45.0;
+        } else if (pct > 92.0) {
+            pct = 92.0;
+        }
+        var base = 40.0 - 4.0 * (_sens - 3) + _shift * 0.5;
         if (_nLight >= 30) {
-            base = percentile(_hLight, _nLight, [85, 78, 70, 62, 55][_sens - 1]).toFloat();
+            base = percentile(_hLight, _nLight, (pct + 0.5).toNumber()).toFloat();
         }
         if (base < 12.0) {
             base = 12.0;
-        } else if (base > 65.0) {
-            base = 65.0;
+        } else if (base > 70.0) {
+            base = 70.0;
         }
         return base;
     }
@@ -555,32 +631,50 @@ class SleepEngine {
         return 15;
     }
 
-    private function setPending(kind as Number, text as String) as Void {
+    private function setPending(kind as Number, text as String, c as Array<Float>) as Void {
         _pendingKind = kind;
         _pendingText = text;
+        _wakeComps = copyComps(c);
     }
 
     // ----------------------------------------------------------------- report
 
+    // Compact summary of the night for learning (see NS_* in SleepModel.mc).
+    function learningSummary(wakeSec as Number, kind as Number) as Array<Numeric> {
+        var s = new Array<Numeric>[NS_SIZE];
+        s[NS_TIME] = wakeSec;
+        s[NS_CYCLE] = (_cycN > 0) ? _cycSum.toFloat() / _cycN : -1;
+        var low = lowMeanHr();
+        var hrMinutes = 0;
+        for (var i = 0; i < epochs; i++) {
+            if (_logHr[i] > 0) {
+                hrMinutes += 1;
+            }
+        }
+        // Enough heart rate data? At least half of the minutes.
+        s[NS_MINHR] = (epochs > 0 && hrMinutes * 2 >= epochs) ? low : -1;
+        s[NS_RMSSD] = (_cntRm > 0) ? _sumRm / _cntRm : -1;
+        s[NS_STRESS] = (_cntSt > 0) ? _sumSt / _cntSt : -1;
+        s[NS_RESP] = (_cntRr > 0) ? _sumRr / _cntRr : -1;
+        s[NS_LIGHTHR] = lightHrRise(low);
+        var early = (kind == REASON_MOVEMENT || kind == REASON_LIGHT || kind == REASON_AWAKE || kind == REASON_LATE);
+        s[NS_EARLY] = early ? 1 : 0;
+        var earlyMin = (_deadline - wakeSec) / 60;
+        s[NS_EARLYMIN] = (earlyMin > 0) ? earlyMin : 0;
+        s[NS_FEEL] = -1;
+        s[NS_SLEEPMIN] = sleepMinutes();
+        var wc = _wakeComps;
+        var c = (wc != null) ? wc : _lastComps;
+        for (var k = 0; k < COMP_COUNT; k++) {
+            s[NS_COMPS + k] = c[k];
+        }
+        return s;
+    }
+
     // Summary of the night for the morning screen. Stored on the watch.
     function report(wakeSec as Number, kind as Number, text as String) as Dictionary<String, Object> {
         var n = epochs;
-        // Falling asleep = first 10 calm minutes in a row
-        var onset = 0;
-        var found = false;
-        for (var i = 0; i + 10 <= n && !found; i++) {
-            var ok = true;
-            for (var j = i; j < i + 10; j++) {
-                if (_logStage[j] == STAGE_WAKE || _logMove[j] >= 20) {
-                    ok = false;
-                    break;
-                }
-            }
-            if (ok) {
-                onset = i;
-                found = true;
-            }
-        }
+        var onset = (_onset >= 0) ? _onset : 0;
         var cnt = [0, 0, 0];
         var hrSum = 0;
         var hrN = 0;
@@ -637,6 +731,9 @@ class SleepEngine {
         if (_cntRr > 0) {
             r.put("rr", (_sumRr / _cntRr * 10.0 + 0.5).toNumber());
         }
+        if (_cycN > 0) {
+            r.put("cy", (_cycSum.toFloat() / _cycN + 0.5).toNumber());
+        }
         var bb0 = _bbStart;
         var bb1 = readBodyBattery();
         if (bb0 != null && bb1 != null) {
@@ -645,13 +742,142 @@ class SleepEngine {
         return r;
     }
 
+    // Minutes asleep after falling asleep (awake minutes not counted)
+    private function sleepMinutes() as Number {
+        if (_onset < 0) {
+            return 0;
+        }
+        var n = 0;
+        for (var i = _onset; i < epochs; i++) {
+            if (_logStage[i] != STAGE_WAKE) {
+                n += 1;
+            }
+        }
+        return n;
+    }
+
+    // Average of the lowest 10 % of calm-minute heart rates, -1 if too few
+    private function lowMeanHr() as Float {
+        if (_nHr < 30) {
+            return -1.0;
+        }
+        var target = _nHr / 10;
+        var cnt = 0;
+        var sum = 0;
+        for (var i = 0; i < 101 && cnt < target; i++) {
+            var take = _hHr[i];
+            if (cnt + take > target) {
+                take = target - cnt;
+            }
+            cnt += take;
+            sum += take * (i + 30);
+        }
+        return (cnt > 0) ? sum.toFloat() / cnt : -1.0;
+    }
+
+    // Typical heart rate rise in minutes with light movement, -1 if too few
+    private function lightHrRise(low as Float) as Float {
+        if (low <= 0.0) {
+            return -1.0;
+        }
+        var sum = 0.0;
+        var n = 0;
+        for (var i = (_onset >= 0) ? _onset : 0; i < epochs; i++) {
+            if (_logHr[i] > 0 && _logMove[i] >= 20 && _logMove[i] <= 80) {
+                sum += _logHr[i] - low;
+                n += 1;
+            }
+        }
+        return (n >= 5) ? sum / n : -1.0;
+    }
+
+    // ------------------------------------------------------------------ tests
+
+    // Feeds one prepared minute into the analysis (unit tests, debug builds only).
+    (:debug)
+    function injectEpoch(endSec as Number, motion as Float, hr as Number, rm as Float, st as Number, rr as Number) as Void {
+        _act = (motion <= 0.0) ? 0.0 : (50.0 * (Math.pow(10.0, 2.5 * motion) - 1.0)).toFloat();
+        if (hr > 0) {
+            _hrSum = hr * 60;
+            _hrN = 60;
+        }
+        if (rm > 0.0) {
+            _ibiSq = rm * rm * 30.0;
+            _ibiN = 30;
+        }
+        if (st >= 0) {
+            _stSum = st * 4;
+            _stN = 4;
+        }
+        if (rr > 0) {
+            _rrSum = rr * 4;
+            _rrN = 4;
+        }
+        closeEpoch(endSec);
+    }
+
+    (:debug)
+    function cycleEstimate() as Float {
+        return (_cycN > 0) ? _cycSum.toFloat() / _cycN : -1.0;
+    }
+
     // ---------------------------------------------------------------- helpers
+
+    // Weighted average of the available signals as 0..100, optionally without one signal.
+    private function score(c as Array<Float>, skip as Number) as Number {
+        var w = 0.0;
+        var sum = 0.0;
+        for (var k = 0; k < COMP_COUNT; k++) {
+            if (k != skip && c[k] >= 0.0) {
+                w += _weights[k];
+                sum += _weights[k] * c[k];
+            }
+        }
+        return (w > 0.0) ? (100.0 * sum / w + 0.5).toNumber() : 0;
+    }
+
+    private function missingComps() as Array<Float> {
+        var c = new Array<Float>[COMP_COUNT];
+        for (var k = 0; k < COMP_COUNT; k++) {
+            c[k] = -1.0;
+        }
+        return c;
+    }
+
+    private function copyComps(src as Array<Float>) as Array<Float> {
+        var c = new Array<Float>[COMP_COUNT];
+        for (var k = 0; k < COMP_COUNT; k++) {
+            c[k] = src[k];
+        }
+        return c;
+    }
+
+    // Learned normal value and tonight's value: tonight counts more the more minutes it has.
+    private function blend(tonight as Float, learned as Float, count as Number) as Float {
+        if (tonight >= 0.0 && learned >= 0.0) {
+            var wN = count / 60.0;
+            if (wN > 1.0) {
+                wN = 1.0;
+            }
+            return wN * tonight + (1.0 - wN) * learned;
+        }
+        return (tonight >= 0.0) ? tonight : learned;
+    }
 
     private function motionScore(a as Float) as Float {
         if (a <= 0.0) {
             return 0.0;
         }
         return clamp01(Math.log(1.0 + a / 50.0, 10).toFloat() / 2.5);
+    }
+
+    private function sigmoid(x as Float) as Float {
+        if (x > 10.0) {
+            x = 10.0;
+        } else if (x < -10.0) {
+            x = -10.0;
+        }
+        return (1.0 / (1.0 + Math.pow(Math.E, -x))).toFloat();
     }
 
     private function zeros(n as Number) as Array<Number> {

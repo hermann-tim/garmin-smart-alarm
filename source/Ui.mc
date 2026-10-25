@@ -187,6 +187,32 @@ module Ui {
         text(dc, cx, cy, font, label, fg);
     }
 
+    // Left- or right-aligned small uppercase label
+    function labelAt(dc as Dc, x as Numeric, y as Numeric, s as String, color as Number, just as Number) as Void {
+        loadFonts();
+        var f = _labelFont;
+        dc.setColor(color, Graphics.COLOR_TRANSPARENT);
+        dc.drawText(x, y, (f != null) ? f : Graphics.FONT_XTINY, s.toUpper(), just | Graphics.TEXT_JUSTIFY_VCENTER);
+    }
+
+    // Small face icon: mood 0 = tired, 1 = okay, 2 = fit
+    function face(dc as Dc, x as Numeric, y as Numeric, r as Numeric, mood as Number, color as Number) as Void {
+        dc.setColor(color, Graphics.COLOR_TRANSPARENT);
+        dc.setPenWidth(3);
+        dc.drawCircle(x, y, r);
+        dc.fillCircle(x - r * 0.35, y - r * 0.2, r * 0.1 + 1);
+        dc.fillCircle(x + r * 0.35, y - r * 0.2, r * 0.1 + 1);
+        var mr = r * 0.45;
+        if (mood == 2) {
+            dc.drawArc(x, y + r * 0.02, mr, Graphics.ARC_COUNTER_CLOCKWISE, 210, 330);
+        } else if (mood == 0) {
+            dc.drawArc(x, y + r * 0.72, mr, Graphics.ARC_COUNTER_CLOCKWISE, 35, 145);
+        } else {
+            dc.drawLine(x - r * 0.32, y + r * 0.35, x + r * 0.32, y + r * 0.35);
+        }
+        dc.setPenWidth(1);
+    }
+
     // Crescent moon icon
     function moon(dc as Dc, x as Numeric, y as Numeric, r as Numeric, color as Number) as Void {
         dc.setColor(color, Graphics.COLOR_TRANSPARENT);

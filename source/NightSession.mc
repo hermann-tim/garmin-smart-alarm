@@ -125,7 +125,7 @@ class NightSession {
     }
 
     private function startTracking(now as Number) as Void {
-        var e = new SleepEngine();
+        var e = new SleepEngine(getApp().model);
         e.start(now, windowStart, deadline, _settings.sensitivity);
         engine = e;
         persist();
@@ -170,6 +170,10 @@ class NightSession {
         var e = engine;
         if (e != null) {
             var r = e.report(now, kind, text);
+            // Learn this night's values right away (the morning answer follows later).
+            var model = getApp().model;
+            r.put("ls", model.learnNight(e.learningSummary(now, kind)));
+            r.put("lk", now);
             e.stop();
             engine = null;
             keepReport(r);
@@ -231,8 +235,9 @@ class NightSession {
         var r = finishReport(now);
         Application.Storage.deleteValue("session");
         getApp().session = null;
-        var v = new SummaryView(r, true);
-        WatchUi.switchToView(v, new SummaryDelegate(v), WatchUi.SLIDE_UP);
+        // Ask how the wake-up felt; the answer feeds the learning (see FeedbackView).
+        var v = new FeedbackView();
+        WatchUi.switchToView(v, new FeedbackDelegate(v, r, snoozeCount), WatchUi.SLIDE_UP);
     }
 
     // The user ends the night early from the night screen.

@@ -54,6 +54,16 @@ module TimeUtil {
         return [atMinuteOfDay(midT, plan[dayT]), dayT];
     }
 
+    // Next time the clock shows this minute of the day: today if still ahead, otherwise tomorrow.
+    function nextOccurrence(minutes as Number, now as Number) as Number {
+        var mid = midnightOf(now);
+        var t = atMinuteOfDay(mid, minutes);
+        if (t <= now + 60) {
+            t = atMinuteOfDay(midnightOf(mid + 36 * 3600), minutes);
+        }
+        return t;
+    }
+
     function minuteOfDay(sec as Number) as Number {
         var i = info(sec);
         return (i.hour as Number) * 60 + (i.min as Number);

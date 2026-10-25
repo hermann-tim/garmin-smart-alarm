@@ -9,6 +9,7 @@ import Toybox.WatchUi;
 function addDebugItems(menu as WatchUi.Menu2) as Void {
     menu.addItem(new WatchUi.MenuItem("Demo-Nacht", "Weckt in 2 Minuten", :demoNight, null));
     menu.addItem(new WatchUi.MenuItem("Demo-Bericht", "Beispieldaten anzeigen", :demoReport, null));
+    menu.addItem(new WatchUi.MenuItem("Demo-Lernen", "8 Beispielnächte lernen", :demoLearn, null));
 }
 
 (:release)
@@ -27,6 +28,39 @@ function handleDebugItem(id as Object) as Void {
     } else if (id == :demoReport) {
         var v = new SummaryView(demoReport(), false);
         WatchUi.pushView(v, new SummaryDelegate(v), WatchUi.SLIDE_LEFT);
+    } else if (id == :demoLearn) {
+        demoLearn(getApp().model);
+        var pv = new ProfileView();
+        WatchUi.pushView(pv, new ProfileDelegate(pv), WatchUi.SLIDE_LEFT);
+    }
+}
+
+// Teaches the profile 8 made-up nights with morning answers.
+(:debug)
+function demoLearn(model as SleepModel) as Void {
+    var now = TimeUtil.nowSec();
+    var feels = [FEEL_FIT, FEEL_OKAY, FEEL_FIT, FEEL_TIRED];
+    for (var i = 0; i < 8; i++) {
+        var s = new Array<Numeric>[NS_SIZE];
+        var t = now - (8 - i) * 86400;
+        s[NS_TIME] = t;
+        s[NS_CYCLE] = 86 + (i % 3) * 3;
+        s[NS_MINHR] = 49 + (i % 2);
+        s[NS_RMSSD] = 46.0 + i;
+        s[NS_STRESS] = 14.0;
+        s[NS_RESP] = 13.8;
+        s[NS_LIGHTHR] = 5.2;
+        s[NS_EARLY] = (i % 3 == 2) ? 0 : 1;
+        s[NS_EARLYMIN] = 8 + i;
+        s[NS_FEEL] = -1;
+        s[NS_SLEEPMIN] = 420;
+        var comps = [0.85, 0.6, 0.3, 0.5, 0.2, 0.3, 0.7];
+        for (var k = 0; k < COMP_COUNT; k++) {
+            s[NS_COMPS + k] = comps[k];
+        }
+        if (model.learnNight(s) == LEARN_OK) {
+            model.applyFeedback(t, feels[i % 4], false);
+        }
     }
 }
 
