@@ -1,6 +1,6 @@
-# ShakeyWakey
+# SmartWake
 
-Smarter Wecker für die **Garmin Forerunner 265**. ShakeyWakey weckt dich in einem Zeitfenster vor deiner Weckzeit, sobald du leicht schläfst, und spätestens zur Weckzeit.
+Smarter Wecker für die **Garmin Forerunner 265**. SmartWake weckt dich in einem Zeitfenster vor deiner Weckzeit, sobald du leicht schläfst, und spätestens zur Weckzeit.
 
 Gebaut mit Connect IQ (Monkey C).
 
@@ -19,7 +19,7 @@ Gebaut mit Connect IQ (Monkey C).
 5. Der Alarm startet sanft und wird stärker: längere Vibrationen, kürzere Pausen und auf Wunsch Töne.
 6. Morgens zeigt ein Bericht, wann und warum du geweckt wurdest, deinen Schlafverlauf, Messwerte und den Ablauf der Nacht.
 
-Garmins eigene Schlafphasen sind für Apps nicht zugänglich. ShakeyWakey schätzt die Phasen deshalb selbst. Das ist eine Schätzung, keine medizinische Messung.
+Garmins eigene Schlafphasen sind für Apps nicht zugänglich. SmartWake schätzt die Phasen deshalb selbst. Das ist eine Schätzung, keine medizinische Messung.
 
 ## Bedienung
 
@@ -45,19 +45,19 @@ Garmins eigene Schlafphasen sind für Apps nicht zugänglich. ShakeyWakey schät
 1. Projekt in VS Code öffnen (Connect IQ SDK und Monkey-C-Erweiterung installiert).
 2. `Strg+Shift+P` → **Monkey C: Build for Device** → `fr265`.
 3. Uhr per USB anschließen und die erzeugte `.prg`-Datei in den Ordner `GARMIN/APPS` kopieren.
-4. Uhr abstecken. ShakeyWakey erscheint in der App-Liste.
+4. Uhr abstecken. SmartWake erscheint in der App-Liste.
 
 ## Wichtig in der Testphase
 
 - Stell dir zusätzlich den **normalen Garmin-Wecker** ein paar Minuten nach deiner Weckzeit, bis du der App vertraust.
-- Prüfe morgens in Garmin Connect, ob Garmins Schlafdaten trotzdem vollständig sind. ShakeyWakey zeichnet keine Aktivität auf, damit das Schlaftracking normal weiterläuft.
+- Prüfe morgens in Garmin Connect, ob Garmins Schlafdaten trotzdem vollständig sind. SmartWake zeichnet keine Aktivität auf, damit das Schlaftracking normal weiterläuft.
 - Teste **Wecker testen** einmal mit eingeschaltetem Schlafmodus der Uhr, um sicherzugehen, dass Vibration und Ton durchkommen.
 
 ## Projektaufbau
 
 ```
 source/
-  ShakeyWakeyApp.mc   Einstieg, setzt eine laufende Nacht nach einem Neustart fort
+  SmartWakeApp.mc     Einstieg, setzt eine laufende Nacht nach einem Neustart fort
   SleepEngine.mc      Sensoren auslesen, Schlaf bewerten, Weckzeitpunkt finden
   NightSession.mc     Ablauf einer Nacht: Messen, Alarm, Schlummern, Bericht
   AlarmPlayer.mc      Ansteigender Alarm aus Vibration, Licht und Ton

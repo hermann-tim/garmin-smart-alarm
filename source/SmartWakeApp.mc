@@ -2,8 +2,8 @@ import Toybox.Application;
 import Toybox.Lang;
 import Toybox.WatchUi;
 
-// Entry point of ShakeyWakey.
-class ShakeyWakeyApp extends Application.AppBase {
+// Entry point of SmartWake.
+class SmartWakeApp extends Application.AppBase {
 
     var settings as AppSettings;
     var session as NightSession or Null = null;
@@ -37,6 +37,6 @@ class ShakeyWakeyApp extends Application.AppBase {
     }
 }
 
-function getApp() as ShakeyWakeyApp {
-    return Application.getApp() as ShakeyWakeyApp;
+function getApp() as SmartWakeApp {
+    return Application.getApp() as SmartWakeApp;
 }

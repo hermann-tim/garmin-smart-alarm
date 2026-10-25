@@ -84,7 +84,8 @@ class SettingsDelegate extends WatchUi.Menu2InputDelegate {
                 WatchUi.pushView(v, new SummaryDelegate(v), WatchUi.SLIDE_LEFT);
             }
         } else if (id == :help) {
-            WatchUi.pushView(new HelpView(), new HelpDelegate(), WatchUi.SLIDE_LEFT);
+            var help = new HelpView();
+            WatchUi.pushView(help, new HelpDelegate(help), WatchUi.SLIDE_LEFT);
         } else {
             handleDebugItem(id);
         }
@@ -205,10 +206,17 @@ class PlanDelegate extends WatchUi.Menu2InputDelegate {
 
 // ------------------------------------------------------------------- help
 
+// Short instructions on two pages (UP/DOWN to switch).
 class HelpView extends WatchUi.View {
+
+    var page as Number = 0;
 
     function initialize() {
         View.initialize();
+    }
+
+    function pageCount() as Number {
+        return 2;
     }
 
     function onUpdate(dc as Dc) as Void {
@@ -216,28 +224,47 @@ class HelpView extends WatchUi.View {
         var cx = dc.getWidth() / 2;
         var cy = dc.getHeight() / 2;
         Ui.title(dc, cx, cy - 136, "So funktioniert's", Ui.ACCENT);
-        var help = "Starte ShakeyWakey jeden Abend mit START und lass die Uhr am Handgelenk. "
-            + "Im Weckfenster weckt sie dich, sobald du leicht schläfst, spätestens zur Weckzeit. "
-            + "Alarm: START = Aus, andere Tasten = Schlummern.";
-        var fitted = Graphics.fitTextToArea(help, Graphics.FONT_XTINY, 320, 250, true);
+        var pages = [
+            "Abends START drücken und die Uhr am Handgelenk lassen. Im Weckfenster weckt sie dich bei leichtem Schlaf, spätestens zur Weckzeit.",
+            "Beim Alarm: START = Aus, jede andere Taste = Schlummern. Morgens zeigt der Bericht, wie deine Nacht war."
+        ];
+        var fitted = Graphics.fitTextToArea(pages[page], Graphics.FONT_XTINY, 310, 270, true);
         if (fitted != null) {
-            Ui.text(dc, cx, cy + 14, Graphics.FONT_XTINY, fitted, Ui.FG);
+            Ui.text(dc, cx, cy + 20, Graphics.FONT_XTINY, fitted, Ui.FG);
         }
+        Ui.pageDots(dc, pageCount(), page);
     }
 }
 
 class HelpDelegate extends WatchUi.BehaviorDelegate {
 
-    function initialize() {
+    private var _v as HelpView;
+
+    function initialize(view as HelpView) {
         BehaviorDelegate.initialize();
+        _v = view;
+    }
+
+    function onNextPage() as Boolean {
+        _v.page = (_v.page + 1) % _v.pageCount();
+        WatchUi.requestUpdate();
+        return true;
+    }
+
+    function onPreviousPage() as Boolean {
+        return onNextPage();
+    }
+
+    // START or tap: next page, after the last page back to the menu
+    function onSelect() as Boolean {
+        if (_v.page + 1 < _v.pageCount()) {
+            return onNextPage();
+        }
+        return onBack();
     }
 
     function onBack() as Boolean {
         WatchUi.popView(WatchUi.SLIDE_RIGHT);
         return true;
-    }
-
-    function onSelect() as Boolean {
-        return onBack();
     }
 }
