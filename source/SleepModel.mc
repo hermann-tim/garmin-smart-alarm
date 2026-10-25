@@ -290,6 +290,17 @@ class SleepModel {
         return (n > 0) ? (sum + n / 2) / n : -1;
     }
 
+    // One line with everything learned, for the night protocol
+    function describe() as String {
+        var w = "";
+        for (var k = 0; k < COMP_COUNT; k++) {
+            w += ((k > 0) ? "," : "") + (weights[k] * 100.0 + 0.5).toNumber();
+        }
+        return "n=" + nights + " stored=" + history.size() + " hr=" + minHr.format("%.1f") + " hs=" + hrStd.format("%.1f")
+            + " rm=" + rmssd.format("%.1f") + " st=" + stress.format("%.1f") + " rr=" + resp.format("%.1f")
+            + " lh=" + lightHr.format("%.1f") + " cy=" + cycleMin.format("%.1f") + " sh=" + shift.format("%.1f") + " w=" + w;
+    }
+
     // ----------------------------------------------------------- helpers
 
     private function findNight(key as Number) as Array<Numeric> or Null {

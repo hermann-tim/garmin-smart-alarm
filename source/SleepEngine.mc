@@ -105,6 +105,16 @@ class SleepEngine {
     private var _logStage as Array<Number>;
     private var _logHr as Array<Number>;
     private var _logMove as Array<Number>;
+    private var _logRm as Array<Number>;     // RMSSD in ms, 0 = none
+    private var _logSt as Array<Number>;     // stress, -1 = none
+    private var _logRr as Array<Number>;     // breathing in tenths per minute, 0 = none
+
+    // For the night protocol: cycle changes (negative = assumed) and the wake-up moment
+    private var _bounds as Array<Number> = [] as Array<Number>;
+    private var _lastLight as Number = 0;
+    private var _lastBody as Number = 0;
+    private var _lastLimit as Number = -1;
+    private var _wakeInfo as String = "";
 
     // Falling asleep and sleep cycles
     private var _onset as Number = -1;          // minute index where sleep began
@@ -131,6 +141,9 @@ class SleepEngine {
         _logStage = new Array<Number>[MAX_EPOCHS];
         _logHr = new Array<Number>[MAX_EPOCHS];
         _logMove = new Array<Number>[MAX_EPOCHS];
+        _logRm = new Array<Number>[MAX_EPOCHS];
+        _logSt = new Array<Number>[MAX_EPOCHS];
+        _logRr = new Array<Number>[MAX_EPOCHS];
         _weights = new Array<Float>[COMP_COUNT];
         for (var k = 0; k < COMP_COUNT; k++) {
             _weights[k] = model.weights[k];
@@ -489,11 +502,16 @@ class SleepEngine {
             _logStage[idx] = stage;
             _logHr[idx] = (hr > 0.0) ? (hr + 0.5).toNumber() : 0;
             _logMove[idx] = (m * 100.0).toNumber();
+            _logRm[idx] = (rm > 0.0) ? (rm + 0.5).toNumber() : 0;
+            _logSt[idx] = (st >= 0.0) ? (st + 0.5).toNumber() : -1;
+            _logRr[idx] = (rr > 0.0) ? (rr * 10.0 + 0.5).toNumber() : 0;
             epochs += 1;
         }
         trackCycles(idx, m, hrElev, stage);
         stageNow = stage;
         _lastComps = c;
+        _lastLight = light;
+        _lastBody = body;
 
         if (_pendingKind < 0 && smartAllowed(endSec)) {
             decide(endSec, light, body, m, stage, c);
@@ -535,8 +553,10 @@ class SleepEngine {
                 _cycN += 1;
             }
             _lastBoundary = idx;
+            _bounds.add(idx);
         } else if (since >= 115) {
             _lastBoundary += (_cycle + 0.5).toNumber();
+            _bounds.add(-_lastBoundary);
         }
     }
 
@@ -556,6 +576,7 @@ class SleepEngine {
         var span = _deadline - _windowStart;
         var progress = (span > 0) ? clamp01((t - _windowStart).toFloat() / span) : 1.0;
         limit = limit * (1.0 - 0.35 * Math.pow(progress, 1.5).toFloat());
+        _lastLimit = (limit + 0.5).toNumber();
         // The cycle clock may tip the balance, but the body has to show something too.
         if (light >= limit && _prevLight >= limit * 0.85 && body >= 15) {
             setPending(REASON_LIGHT, "Leichtschlaf: " + signals(c), c);
@@ -635,6 +656,45 @@ class SleepEngine {
         _pendingKind = kind;
         _pendingText = text;
         _wakeComps = copyComps(c);
+        _wakeInfo = "kind=" + kind + " min=" + epochs + " light=" + _lastLight + " body=" + _lastBody + " limit=" + _lastLimit;
+    }
+
+    // ---------------------------------------------------------- night protocol
+
+    // Writes the whole night into the protocol (see NightLog). One line per hour,
+    // seven characters per minute: movement, pulse, HRV, stress, breathing, score, stage.
+    function writeLog() as Void {
+        if (!NightLog.ENABLED) {
+            return;
+        }
+        var b = "";
+        for (var i = 0; i < _bounds.size(); i++) {
+            b += ((i > 0) ? "," : "") + _bounds[i];
+        }
+        NightLog.write("CYC onset=" + _onset + " n=" + _cycN + " sum=" + _cycSum + " b=" + b);
+        var i = 0;
+        while (i < epochs) {
+            var end = (i + 60 < epochs) ? i + 60 : epochs;
+            var line = "D" + i + ":";
+            for (var j = i; j < end; j++) {
+                line += NightLog.enc(_logMove[j] * 63 / 100);
+                line += (_logHr[j] > 0) ? NightLog.enc(_logHr[j] - 30) : ".";
+                line += (_logRm[j] > 0) ? NightLog.enc(_logRm[j] / 3) : ".";
+                line += (_logSt[j] >= 0) ? NightLog.enc(_logSt[j] / 2) : ".";
+                line += (_logRr[j] > 0) ? NightLog.enc((_logRr[j] - 40) * 4 / 10) : ".";
+                line += NightLog.enc(_logLight[j] * 63 / 100);
+                line += NightLog.enc(_logStage[j]);
+            }
+            NightLog.write(line);
+            i = end;
+        }
+        var wc = _wakeComps;
+        var c = (wc != null) ? wc : _lastComps;
+        var cs = "";
+        for (var k = 0; k < COMP_COUNT; k++) {
+            cs += ((k > 0) ? "," : "") + (c[k] * 100.0).toNumber();
+        }
+        NightLog.write("WAKE " + _wakeInfo + " c=" + cs + " noise=" + _noise.toNumber() + " rate=" + _rate);
     }
 
     // ----------------------------------------------------------------- report

@@ -158,6 +158,8 @@ function finishMorning(r as Dictionary, feel as Number, snoozes as Number) as Vo
     } else if (status == LEARN_OUTLIER) {
         events.add(stamp + "Nicht gelernt: ungewöhnliche Nacht");
     }
+    NightLog.write("FEEL " + feel + " snoozes=" + snoozes + " status=" + status);
+    NightLog.write("MODEL " + model.describe());
     r.put("ev", events);
     try {
         Application.Storage.setValue("lastNight", r);

@@ -192,6 +192,40 @@ function testFeedbackUnknownNightIgnored(logger as Test.Logger) as Boolean {
     return true;
 }
 
+// ----------------------------------------------------------- night protocol
+
+(:test)
+function testNightLogEncoding(logger as Test.Logger) as Boolean {
+    Test.assertEqual(NightLog.enc(0), "0");
+    Test.assertEqual(NightLog.enc(10), "A");
+    Test.assertEqual(NightLog.enc(36), "a");
+    Test.assertEqual(NightLog.enc(63), "_");
+    Test.assertEqual(NightLog.enc(99), "_");
+    Test.assertEqual(NightLog.enc(-1), ".");
+    return true;
+}
+
+// Writes a full 8-hour made-up night into the protocol (must not crash or be too slow).
+(:test)
+function testNightLogWritesFullNight(logger as Test.Logger) as Boolean {
+    var e = new SleepEngine(freshModel());
+    var t0 = 1700000000;
+    e.setup(t0, t0 + 450 * 60, t0 + 480 * 60, 3);
+    for (var i = 0; i < 480; i++) {
+        var inCycle = (i - 15) % 90;
+        var light = (i >= 15 && inCycle < 8);
+        var m = 0.0;
+        if (i < 12) {
+            m = 0.6;
+        } else if (light) {
+            m = (inCycle == 0) ? 0.6 : 0.25;
+        }
+        e.injectEpoch(t0 + (i + 1) * 60, m, light ? 57 : 50, light ? 35.0 : 55.0, light ? 25 : 10, 14);
+    }
+    e.writeLog();
+    return true;
+}
+
 // ----------------------------------------------------------------- engine
 
 // A made-up night: awake for 12 minutes, then sleep with a short light phase

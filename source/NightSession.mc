@@ -47,6 +47,9 @@ class NightSession {
         }
         phase = PHASE_TRACK;
         log(now, "Start, Wecker " + TimeUtil.fmtClock(deadline));
+        NightLog.write("START t=" + now + " dl=" + deadline + " ws=" + windowStart + " sens=" + _settings.sensitivity
+            + " vibe=" + _settings.vibeLevel + " tone=" + _settings.toneOn);
+        NightLog.write("MODEL " + getApp().model.describe());
         startTracking(now);
     }
 
@@ -78,6 +81,7 @@ class NightSession {
         if (phase == PHASE_TRACK) {
             if (now < deadline - 60) {
                 log(now, "App neu gestartet");
+                NightLog.write("RESTART t=" + now + " dl=" + deadline);
                 startTracking(now);
                 return true;
             }
@@ -168,18 +172,19 @@ class NightSession {
         reasonText = text;
         log(now, text);
         var e = engine;
+        var status = LEARN_NONE;
         if (e != null) {
             var r = e.report(now, kind, text);
             // Learn this night's values right away (the morning answer follows later).
-            var model = getApp().model;
-            r.put("ls", model.learnNight(e.learningSummary(now, kind)));
+            status = getApp().model.learnNight(e.learningSummary(now, kind));
+            r.put("ls", status);
             r.put("lk", now);
             e.stop();
-            engine = null;
             keepReport(r);
         } else {
             keepReport(minimalReport(now, kind, text));
         }
+        engine = null;
         persist();
         player.start(_settings.vibeLevel, _settings.toneOn, 1);
         if (overlayOpen) {
@@ -187,6 +192,13 @@ class NightSession {
             WatchUi.popView(WatchUi.SLIDE_IMMEDIATE);
         }
         WatchUi.switchToView(new AlarmView(self, player, false), new AlarmDelegate(self), WatchUi.SLIDE_IMMEDIATE);
+
+        // Night protocol last, so the alarm is not delayed by it.
+        NightLog.write("RING t=" + now + " kind=" + kind + " " + text);
+        if (e != null) {
+            e.writeLog();
+            NightLog.write("LEARN status=" + status + " " + getApp().model.describe());
+        }
     }
 
     private function ringAgain() as Void {
@@ -221,6 +233,7 @@ class NightSession {
         phase = PHASE_SNOOZE;
         snoozeUntil = now + _settings.snoozeMin * 60;
         log(now, "Schlummern bis " + TimeUtil.fmtClock(snoozeUntil));
+        NightLog.write("SNOOZE t=" + now + " n=" + snoozeCount);
         persist();
         _timer.stop();
         _timer.start(method(:onTick), 1000, true);
@@ -232,6 +245,7 @@ class NightSession {
         player.stop();
         _timer.stop();
         log(now, "Wecker aus");
+        NightLog.write("OFF t=" + now + " snoozes=" + snoozeCount);
         var r = finishReport(now);
         Application.Storage.deleteValue("session");
         getApp().session = null;
@@ -246,11 +260,13 @@ class NightSession {
         _timer.stop();
         player.stop();
         var e = engine;
+        NightLog.write("CANCEL t=" + now);
         if (e != null) {
             if (now - start >= 1800) {
                 log(now, "Selbst beendet");
                 keepReport(e.report(now, REASON_CANCEL, "Selbst beendet"));
                 finishReport(now);
+                e.writeLog();
             }
             e.stop();
             engine = null;
