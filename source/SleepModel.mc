@@ -111,24 +111,29 @@ class SleepModel {
         }
     }
 
+    // A full watch storage must not crash the app (it is called right after the alarm
+    // starts); then this night's learning is simply not kept.
     function save() as Void {
         if (!persist) {
             return;
         }
-        Application.Storage.setValue("model", {
-            "v" => 1,
-            "n" => nights,
-            "hr" => minHr,
-            "hs" => hrStd,
-            "rm" => rmssd,
-            "st" => stress,
-            "rr" => resp,
-            "lh" => lightHr,
-            "cy" => cycleMin,
-            "sh" => shift,
-            "w" => weights,
-            "h" => history
-        });
+        try {
+            Application.Storage.setValue("model", {
+                "v" => 1,
+                "n" => nights,
+                "hr" => minHr,
+                "hs" => hrStd,
+                "rm" => rmssd,
+                "st" => stress,
+                "rr" => resp,
+                "lh" => lightHr,
+                "cy" => cycleMin,
+                "sh" => shift,
+                "w" => weights,
+                "h" => history
+            });
+        } catch (e) {
+        }
     }
 
     function reset() as Void {
@@ -251,8 +256,11 @@ class SleepModel {
             var step = implicit ? 1.5 : 3.0;
             // woken early but tired: be stricter. Woken at the wake time and tired: be more willing.
             shift += early ? step : -step;
-        } else if (reward > 0.0 && early) {
-            shift -= 0.5;
+        } else if (reward > 0.0 && early && shift > 0.0) {
+            // Woken early and fit: the setting worked. Earlier strictness slowly fades,
+            // but good mornings never make it looser than neutral (that would drift
+            // towards waking too early).
+            shift = maxf(0.0, shift - 0.5);
         }
         shift = clampf(shift, -12.0, 12.0);
         save();

@@ -50,16 +50,20 @@ class AppSettings {
     }
 
     function save() as Void {
-        Application.Storage.setValue("settings", {
-            "plan" => plan,
-            "win" => windowMin,
-            "snz" => snoozeOn,
-            "snzMin" => snoozeMin,
-            "snzMax" => snoozeMax,
-            "vibe" => vibeLevel,
-            "tone" => toneOn,
-            "sens" => sensitivity
-        });
+        try {
+            Application.Storage.setValue("settings", {
+                "plan" => plan,
+                "win" => windowMin,
+                "snz" => snoozeOn,
+                "snzMin" => snoozeMin,
+                "snzMax" => snoozeMax,
+                "vibe" => vibeLevel,
+                "tone" => toneOn,
+                "sens" => sensitivity
+            });
+        } catch (e) {
+            // watch storage full: the settings still apply until the app closes
+        }
     }
 
     function vibeLabel() as String {

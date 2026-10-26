@@ -227,7 +227,7 @@ class PlanDelegate extends WatchUi.Menu2InputDelegate {
 
 // ------------------------------------------------------------------- help
 
-// Short instructions on two pages (UP/DOWN to switch).
+// Short instructions on three pages (UP/DOWN to switch).
 class HelpView extends WatchUi.View {
 
     var page as Number = 0;
@@ -237,7 +237,7 @@ class HelpView extends WatchUi.View {
     }
 
     function pageCount() as Number {
-        return 2;
+        return 3;
     }
 
     function onUpdate(dc as Dc) as Void {
@@ -247,7 +247,8 @@ class HelpView extends WatchUi.View {
         Ui.title(dc, cx, cy - 136, "So funktioniert's", Ui.ACCENT);
         var pages = [
             "Abends START drücken und die Uhr am Handgelenk lassen. Im Weckfenster weckt sie dich bei leichtem Schlaf, spätestens zur Weckzeit.",
-            "Beim Alarm: START = Aus, jede andere Taste = Schlummern. Morgens zeigt der Bericht, wie deine Nacht war."
+            "Beim Alarm: START = Aus, jede andere Taste = Schlummern. Morgens zeigt der Bericht, wie deine Nacht war.",
+            "Wichtig: Der Wecker klingelt nur, solange SmartWake offen ist. Stell zur Sicherheit den Garmin-Wecker ein paar Minuten später."
         ];
         var fitted = Graphics.fitTextToArea(pages[page], Graphics.FONT_XTINY, 310, 270, true);
         if (fitted != null) {

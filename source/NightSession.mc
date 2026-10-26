@@ -16,7 +16,9 @@ class NightSession {
     var start as Number = 0;
     var windowStart as Number = 0;
     var deadline as Number = 0;
-    var alarmAt as Number = 0;
+    var alarmAt as Number = 0;            // first alarm of the morning
+    var ringAt as Number = 0;             // start of the current ringing (changes after snoozing)
+    var restarts as Number = 0;           // how often the app was reopened during the night
     var snoozeUntil as Number = 0;
     var snoozeCount as Number = 0;
     var reasonKind as Number = REASON_DEADLINE;
@@ -62,6 +64,11 @@ class NightSession {
         windowStart = num(d, "ws");
         deadline = num(d, "dl");
         alarmAt = num(d, "aa");
+        ringAt = num(d, "ra");
+        if (ringAt <= 0) {
+            ringAt = alarmAt;
+        }
+        restarts = num(d, "rn");
         snoozeUntil = num(d, "su");
         snoozeCount = num(d, "sc");
         reasonKind = num(d, "rk");
@@ -81,6 +88,9 @@ class NightSession {
         }
 
         if (phase == PHASE_TRACK) {
+            // The measurement starts again from now on (the data before is lost),
+            // the morning report shows that the night was interrupted.
+            restarts += 1;
             if (now < deadline - 60) {
                 log(now, "App neu gestartet");
                 NightLog.write("RESTART t=" + now + " dl=" + deadline);
@@ -91,11 +101,12 @@ class NightSession {
                 // The wake time passed while the app was closed: ring now.
                 phase = PHASE_ALARM;
                 alarmAt = now;
+                ringAt = now;
                 reasonKind = REASON_DEADLINE;
                 reasonText = "Weckzeit erreicht";
                 log(now, reasonText);
-                keepReport(minimalReport(now, reasonKind, reasonText));
                 persist();
+                keepReport(minimalReport(now, reasonKind, reasonText));
                 return true;
             }
             return false;
@@ -103,7 +114,8 @@ class NightSession {
 
         loadReport();
         if (phase == PHASE_ALARM) {
-            return now < alarmAt + 1800;
+            // Counted from the current ringing, so a snoozed alarm survives a restart too.
+            return now < ringAt + 1800;
         }
         if (phase == PHASE_SNOOZE) {
             if (now < snoozeUntil) {
@@ -112,6 +124,7 @@ class NightSession {
             }
             if (now < snoozeUntil + 1800) {
                 phase = PHASE_ALARM;
+                ringAt = now;
                 persist();
                 return true;
             }
@@ -170,32 +183,36 @@ class NightSession {
         _timer.stop();
         phase = PHASE_ALARM;
         alarmAt = now;
+        ringAt = now;
         reasonKind = kind;
         reasonText = text;
         log(now, text);
-        var e = engine;
-        var status = LEARN_NONE;
-        if (e != null) {
-            var r = e.report(now, kind, text);
-            // Learn this night's values right away (the morning answer follows later).
-            status = getApp().model.learnNight(e.learningSummary(now, kind));
-            r.put("ls", status);
-            r.put("lk", now);
-            e.stop();
-            keepReport(r);
-        } else {
-            keepReport(minimalReport(now, kind, text));
-        }
-        engine = null;
-        persist();
+
+        // The alarm itself comes first: nothing after it (report, learning, storage)
+        // may keep it from ringing.
         player.start(_settings.vibeLevel, _settings.toneOn, 1);
         if (overlayOpen) {
             overlayOpen = false;
             WatchUi.popView(WatchUi.SLIDE_IMMEDIATE);
         }
         WatchUi.switchToView(new AlarmView(self, player, false), new AlarmDelegate(self), WatchUi.SLIDE_IMMEDIATE);
+        persist();
 
-        // Night protocol last, so the alarm is not delayed by it.
+        // Then the morning report and the learning.
+        var e = engine;
+        engine = null;
+        var status = LEARN_NONE;
+        var r = (e != null) ? e.report(now, kind, text) : minimalReport(now, kind, text);
+        if (e != null) {
+            e.stop();
+            // Learn this night's values right away (the morning answer follows later).
+            status = getApp().model.learnNight(e.learningSummary(now, kind));
+            r.put("ls", status);
+            r.put("lk", now);
+        }
+        keepReport(r);
+
+        // Night protocol last.
         NightLog.write("RING t=" + now + " kind=" + kind + " " + text);
         if (e != null) {
             e.writeLog();
@@ -207,6 +224,7 @@ class NightSession {
         var now = TimeUtil.nowSec();
         _timer.stop();
         phase = PHASE_ALARM;
+        ringAt = now;
         log(now, "Alarm erneut");
         persist();
         player.start(_settings.vibeLevel, _settings.toneOn, 1);
@@ -302,22 +320,32 @@ class NightSession {
 
     // --------------------------------------------------------------- storage
 
+    // Storage errors (watch storage full) must never stop the night or the alarm,
+    // so they are caught: then only the restart after closing the app is lost.
     private function persist() as Void {
-        Application.Storage.setValue("session", {
-            "ph" => phase,
-            "st" => start,
-            "ws" => windowStart,
-            "dl" => deadline,
-            "aa" => alarmAt,
-            "su" => snoozeUntil,
-            "sc" => snoozeCount,
-            "rk" => reasonKind,
-            "rs" => reasonText,
-            "ev" => _events
-        });
+        try {
+            Application.Storage.setValue("session", {
+                "ph" => phase,
+                "st" => start,
+                "ws" => windowStart,
+                "dl" => deadline,
+                "aa" => alarmAt,
+                "ra" => ringAt,
+                "rn" => restarts,
+                "su" => snoozeUntil,
+                "sc" => snoozeCount,
+                "rk" => reasonKind,
+                "rs" => reasonText,
+                "ev" => _events
+            });
+        } catch (ex) {
+        }
     }
 
     private function keepReport(r as Dictionary) as Void {
+        if (restarts > 0) {
+            r.put("rst", restarts);   // the report then says that the night was interrupted
+        }
         _report = r;
         storeReport(r);
     }
@@ -338,10 +366,8 @@ class NightSession {
         try {
             Application.Storage.setValue("lastNight", r);
         } catch (e) {
-            // Too big: keep the summary without the per-minute data.
-            r.put("L", [] as Array<Number>);
+            // Too big: keep the summary without the per-minute stages.
             r.put("S", [] as Array<Number>);
-            r.put("H", [] as Array<Number>);
             try {
                 Application.Storage.setValue("lastNight", r);
             } catch (e2) {
@@ -349,9 +375,10 @@ class NightSession {
         }
     }
 
+    // Only a report of this night: if saving it failed, the stored one is still last night's.
     private function loadReport() as Void {
         var r = Application.Storage.getValue("lastNight");
-        if (r instanceof Dictionary) {
+        if (r instanceof Dictionary && num(r, "wu") >= start) {
             _report = r;
         }
     }
@@ -369,9 +396,7 @@ class NightSession {
             "sl" => now - start,
             "pc" => [0, 0, 0],
             "mv" => 0,
-            "L" => [] as Array<Number>,
-            "S" => [] as Array<Number>,
-            "H" => [] as Array<Number>
+            "S" => [] as Array<Number>
         };
     }
 

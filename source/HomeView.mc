@@ -35,18 +35,7 @@ class HomeView extends WatchUi.View {
 
     // Tonight's target: [deadlineSec, dayIndex, wakeMinutes, planMinutes]
     function target() as Array<Number> {
-        var s = getApp().settings;
-        var now = TimeUtil.nowSec();
-        var next = TimeUtil.nextDeadline(s.plan, now);
-        var planMin = s.plan[next[1]];
-        var wake = planMin + offsetMin;
-        if (wake < 0) {
-            wake = 0;
-        } else if (wake > 1435) {
-            wake = 1435;
-        }
-        var dl = TimeUtil.nextOccurrence(wake, now);
-        return [dl, TimeUtil.weekdayIndex(dl), wake, planMin];
+        return TimeUtil.planTarget(getApp().settings.plan, offsetMin, TimeUtil.nowSec());
     }
 
     function changeBy(delta as Number) as Void {

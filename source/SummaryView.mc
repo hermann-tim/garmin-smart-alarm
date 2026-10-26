@@ -91,7 +91,8 @@ class SummaryView extends WatchUi.View {
         for (var row = 0; row < 3; row++) {
             dc.fillRectangle(x0, top + row * rowH + rowH / 2, cw, 1);
         }
-        // one block per run of equal stages: awake on top, deep at the bottom
+        // one block per run of equal stages: awake on top, deep at the bottom,
+        // minutes without data stay empty
         var stageColors = [Ui.DEEP, Ui.LIGHT, Ui.AWAKE];
         var i = 0;
         while (i < n) {
@@ -100,11 +101,13 @@ class SummaryView extends WatchUi.View {
             while (j + 1 < n && stages[j + 1] == stage) {
                 j++;
             }
-            var xa = x0 + i * cw / n;
-            var xb = x0 + (j + 1) * cw / n;
-            var width = (xb - xa < 2) ? 2 : xb - xa;
-            dc.setColor(stageColors[stage], Graphics.COLOR_TRANSPARENT);
-            dc.fillRoundedRectangle(xa, top + (2 - stage) * rowH + 5, width, rowH - 10, 4);
+            if (stage >= STAGE_DEEP && stage <= STAGE_WAKE) {
+                var xa = x0 + i * cw / n;
+                var xb = x0 + (j + 1) * cw / n;
+                var width = (xb - xa < 2) ? 2 : xb - xa;
+                dc.setColor(stageColors[stage], Graphics.COLOR_TRANSPARENT);
+                dc.fillRoundedRectangle(xa, top + (2 - stage) * rowH + 5, width, rowH - 10, 4);
+            }
             i = j + 1;
         }
         Ui.text(dc, x0 + 30, top + rowH * 3 + 22, Graphics.FONT_XTINY, TimeUtil.fmtClock(start), Ui.DIM);
@@ -120,6 +123,16 @@ class SummaryView extends WatchUi.View {
             Ui.label(dc, x, cy + 110, names[k], Ui.SUB);
             Ui.text(dc, x, cy + 138, Graphics.FONT_XTINY, (pc.size() == 3) ? pc[k].format("%d") + " %" : "-", Ui.FG);
         }
+
+        // The stages are an estimate; say so, and say when data is missing.
+        // (Room for about 16 characters at the round edge.)
+        var note = "Phasen geschätzt";
+        if (num("rst") > 0) {
+            note = "Nach Neustart";            // the chart then starts at the restart
+        } else if (num("nd") >= 5) {
+            note = num("nd").format("%d") + " min ohne Puls";
+        }
+        Ui.text(dc, cx, cy + 172, Graphics.FONT_XTINY, note, Ui.DIM);
     }
 
     private function drawStats(dc as Dc) as Void {

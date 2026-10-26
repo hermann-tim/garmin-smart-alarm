@@ -5,9 +5,11 @@ import Toybox.Sensor;
 import Toybox.SensorHistory;
 
 // Our own sleep stage estimate (Garmin's stages are not available to apps).
+// REM sleep is not told apart and counts as light sleep.
 const STAGE_DEEP = 0;
 const STAGE_LIGHT = 1;
 const STAGE_WAKE = 2;
+const STAGE_NODATA = 3;   // no pulse while lying still (watch off the wrist, sensor gap)
 
 // Why the alarm went off.
 const REASON_DEADLINE = 0;
@@ -66,6 +68,7 @@ class SleepEngine {
     private var _stN as Number = 0;
     private var _rrSum as Number = 0;
     private var _rrN as Number = 0;
+    private var _accN as Number = 0;          // accelerometer deliveries (0 = movement unknown)
     private var _ticks as Number = 0;
 
     // Accelerometer state
@@ -77,8 +80,9 @@ class SleepEngine {
 
     // Last minutes, index 0 = newest, -1.0 = no value
     private var _mHist as Array<Float> = [0.0, 0.0, 0.0];
-    private var _hrHist as Array<Float> = [-1.0, -1.0, -1.0, -1.0];
+    private var _hrHist as Array<Float> = [-1.0, -1.0, -1.0, -1.0, -1.0, -1.0, -1.0, -1.0];
     private var _rrHist as Array<Float> = [-1.0, -1.0, -1.0, -1.0, -1.0];
+    private var _moveRun as Number = 0;       // minutes in a row with clear movement
     private var _prevLight as Number = 0;
 
     // Distributions over the night (101 bins) = this night's normal values
@@ -195,6 +199,9 @@ class SleepEngine {
             sampleMonitor();
         }
         _armed = smartAllowed(now);
+        // If the watch did not call us for a while, the missed minutes are closed too.
+        // They have no measurements and are marked "no data" (not "calm" or "deep"),
+        // so the minutes stay in step with the clock.
         var guard = 0;
         while (now - _epochStart >= EPOCH && guard < 5) {
             _epochStart += EPOCH;
@@ -218,7 +225,7 @@ class SleepEngine {
         if (stageNow < 0) {
             return "Messung läuft";
         }
-        return ["Tiefschlaf", "Leichtschlaf", "Wach"][stageNow];
+        return ["Tiefschlaf", "Leichtschlaf", "Wach", "Kein Puls"][stageNow];
     }
 
     // ---------------------------------------------------------------- sensors
@@ -228,7 +235,10 @@ class SleepEngine {
             Sensor.setEnabledSensors([Sensor.SENSOR_ONBOARD_HEARTRATE] as Array<Sensor.SensorType>);
         } catch (e) {
         }
-        Sensor.enableSensorEvents(method(:onSensorInfo));
+        try {
+            Sensor.enableSensorEvents(method(:onSensorInfo));
+        } catch (e) {
+        }
         _rate = 10;
         try {
             var maxRate = Sensor.getMaxSampleRate();
@@ -276,6 +286,7 @@ class SleepEngine {
     function onSensorData(data as Sensor.SensorData) as Void {
         var acc = data.accelerometerData;
         if (acc != null) {
+            _accN += 1;
             addAccel(acc.x, acc.y, acc.z);
         }
         var hrd = data.heartRateData;
@@ -402,15 +413,18 @@ class SleepEngine {
 
     private function closeEpoch(endSec as Number) as Void {
         var idx = epochs;
-        var m = motionScore(_act);
+        // No accelerometer data at all in this minute: movement is unknown, not "none".
+        var moveKnown = _accN > 0;
+        var m = moveKnown ? motionScore(_act) : 0.0;
         var hr = (_hrN > 0) ? _hrSum.toFloat() / _hrN : -1.0;
         var rm = (_ibiN >= 15) ? Math.sqrt(_ibiSq / _ibiN).toFloat() : -1.0;
         var st = (_stN > 0) ? _stSum.toFloat() / _stN : -1.0;
         var rr = (_rrN > 0) ? _rrSum.toFloat() / _rrN : -1.0;
 
         _mHist = [m, _mHist[0], _mHist[1]];
-        _hrHist = [hr, _hrHist[0], _hrHist[1], _hrHist[2]];
+        _hrHist = [hr, _hrHist[0], _hrHist[1], _hrHist[2], _hrHist[3], _hrHist[4], _hrHist[5], _hrHist[6]];
         _rrHist = [rr, _rrHist[0], _rrHist[1], _rrHist[2], _rrHist[3]];
+        _moveRun = (m >= 0.45) ? _moveRun + 1 : 0;
 
         // This night's normal values come from calm minutes only.
         if (m < 0.45) {
@@ -439,7 +453,9 @@ class SleepEngine {
 
         // Every signal gives 0..1 (1 = looks like light sleep), -1 = not available.
         var c = missingComps();
-        c[COMP_MOVE] = maxf(m, maxf(0.6 * _mHist[1], 0.35 * _mHist[2]));
+        if (moveKnown) {
+            c[COMP_MOVE] = maxf(m, maxf(0.6 * _mHist[1], 0.35 * _mHist[2]));
+        }
 
         var hrElev = 0.0;
         var hrBase = blend((_nHr >= 10) ? percentile(_hHr, _nHr, 10) + 30.0 : -1.0, _priorHr, _nHr);
@@ -449,7 +465,7 @@ class SleepEngine {
             c[COMP_HR] = sigmoid((hrElev - _lightHr) * 0.8);
         }
 
-        var hrDelta = meanAbsDelta(_hrHist);
+        var hrDelta = meanAbsDelta(_hrHist, 4, 2);
         if (hrDelta >= 0.0) {
             c[COMP_UNREST] = clamp01((hrDelta - 0.6) / 3.0);
         }
@@ -485,15 +501,8 @@ class SleepEngine {
         var light = score(c, -1);
         var body = score(c, COMP_CYCLE);
 
-        // Stage estimate for the night log: from body signals only
-        var stage = STAGE_LIGHT;
-        if ((m >= 0.8 && (_mHist[1] >= 0.45 || hrElev >= 12.0)) || (hrElev >= 15.0 && m >= 0.2)) {
-            stage = STAGE_WAKE;
-        } else if (endSec - _start >= MIN_SLEEP && m < 0.05 && hrElev < 4.0 && body <= deepLimit()) {
-            // Only after the first 20 minutes: before that, lying still may simply mean being awake.
-            stage = STAGE_DEEP;
-        }
-        if (endSec - _start >= 1800 && stage != STAGE_WAKE) {
+        var stage = classify(endSec, m, hr, hrElev, c);
+        if (endSec - _start >= 1800 && stage != STAGE_WAKE && stage != STAGE_NODATA) {
             _nLight += addBin(_hLight, light);
         }
 
@@ -519,6 +528,7 @@ class SleepEngine {
         _prevLight = light;
 
         _act = 0.0;
+        _accN = 0;
         _hrSum = 0;
         _hrN = 0;
         _ibiSq = 0.0;
@@ -529,12 +539,39 @@ class SleepEngine {
         _rrN = 0;
     }
 
+    // Sleep stage of one minute, from the body signals. Checked against Garmin's stages
+    // of a real night: there, deep sleep came with a very even pulse, while short still
+    // phases between movements were light sleep, and single turns were not waking up.
+    private function classify(endSec as Number, m as Float, hr as Float, hrElev as Float, c as Array<Float>) as Number {
+        // Awake: clear movement for 2 minutes with a strong pulse rise, or restless for 4 minutes.
+        if ((_moveRun >= 2 && hrElev >= 10.0) || _moveRun >= 4) {
+            return STAGE_WAKE;
+        }
+        // No pulse: lying still can mean anything (also: the watch is off the wrist).
+        if (hr < 0.0) {
+            return (m >= 0.05) ? STAGE_LIGHT : STAGE_NODATA;
+        }
+        // Deep: no movement for about 3 minutes and the pulse hardly changed over the
+        // last 8 minutes. Not in the first 20 minutes: lying still then may mean being awake.
+        // A pulse far above the night's resting level is not deep sleep either (lying awake).
+        var still = c[COMP_MOVE] >= 0.0 && c[COMP_MOVE] < 0.05;
+        var even = meanAbsDelta(_hrHist, 8, 5);
+        if (endSec - _start >= MIN_SLEEP && still && even >= 0.0 && even <= 0.8 && hrElev < 8.0) {
+            return STAGE_DEEP;
+        }
+        return STAGE_LIGHT;
+    }
+
     // Finds the moment of falling asleep and the changes between sleep cycles.
     // A cycle change shows as movement plus a heart rate rise, 70-115 minutes
     // after the last one. If none shows up, it is assumed where it was expected,
     // so the cycle clock stays in step instead of drifting.
     private function trackCycles(idx as Number, m as Float, hrElev as Float, stage as Number) as Void {
         if (_onset < 0) {
+            // A minute without data neither counts as calm nor breaks a calm run.
+            if (stage == STAGE_NODATA) {
+                return;
+            }
             if (stage != STAGE_WAKE && m < 0.2) {
                 _calmRun += 1;
             } else {
@@ -570,6 +607,10 @@ class SleepEngine {
             setPending(REASON_MOVEMENT, "Bewegung im Leichtschlaf", c);
             return;
         }
+        // Without a pulse there is nothing to judge: wait, the wake time still rings.
+        if (stage == STAGE_NODATA) {
+            return;
+        }
         // Compare with this night's own values. Towards the wake time it gets easier,
         // slowly at first and faster at the end.
         var limit = lightLimit();
@@ -577,8 +618,12 @@ class SleepEngine {
         var progress = (span > 0) ? clamp01((t - _windowStart).toFloat() / span) : 1.0;
         limit = limit * (1.0 - 0.35 * Math.pow(progress, 1.5).toFloat());
         _lastLimit = (limit + 0.5).toNumber();
+        // Lying completely still while the pulse is up was REM sleep (dreaming) when compared
+        // with Garmin's stages. So the body signals only wake you together with at least a
+        // small movement in the last minutes; otherwise the next movement or the wake time will.
         // The cycle clock may tip the balance, but the body has to show something too.
-        if (light >= limit && _prevLight >= limit * 0.85 && body >= 15) {
+        var moved = c[COMP_MOVE] >= 0.05;
+        if (moved && light >= limit && _prevLight >= limit * 0.85 && body >= 15) {
             setPending(REASON_LIGHT, "Leichtschlaf: " + signals(c), c);
             return;
         }
@@ -636,20 +681,19 @@ class SleepEngine {
         return base;
     }
 
+    // The learned strictness also applies to movement: after tired mornings
+    // a movement has to be clearer to wake you.
     private function moveLimit() as Float {
-        return [0.6, 0.52, 0.45, 0.38, 0.32][_sens - 1];
+        return [0.6, 0.52, 0.45, 0.38, 0.32][_sens - 1] * strictness();
     }
 
     private function chunkLimit() as Float {
-        return 2500.0 * [2.0, 1.4, 1.0, 0.7, 0.5][_sens - 1];
+        return 2500.0 * [2.0, 1.4, 1.0, 0.7, 0.5][_sens - 1] * strictness();
     }
 
-    private function deepLimit() as Number {
-        if (_nLight >= 30) {
-            var p = percentile(_hLight, _nLight, 25);
-            return (p < 25) ? p : 25;
-        }
-        return 15;
+    // 1.0 = neutral, up to 1.3 = stricter (shift +12), down to 0.7 = wakes more readily (shift -12)
+    private function strictness() as Float {
+        return 1.0 + _shift * 0.025;
     }
 
     private function setPending(kind as Number, text as String, c as Array<Float>) as Void {
@@ -735,7 +779,7 @@ class SleepEngine {
     function report(wakeSec as Number, kind as Number, text as String) as Dictionary<String, Object> {
         var n = epochs;
         var onset = (_onset >= 0) ? _onset : 0;
-        var cnt = [0, 0, 0];
+        var cnt = [0, 0, 0, 0];
         var hrSum = 0;
         var hrN = 0;
         var hrMin = 999;
@@ -754,6 +798,7 @@ class SleepEngine {
                 moves += 1;
             }
         }
+        // Shares of deep, light and awake. Minutes without data are left out.
         var total = cnt[0] + cnt[1] + cnt[2];
         var pc = [0, 0, 0];
         if (total > 0) {
@@ -771,13 +816,14 @@ class SleepEngine {
             "ws" => _windowStart,
             "rk" => kind,
             "rs" => text,
-            "sl" => wakeSec - onsetSec - cnt[STAGE_WAKE] * EPOCH,
+            "sl" => (cnt[STAGE_DEEP] + cnt[STAGE_LIGHT]) * EPOCH,
             "pc" => pc,
             "mv" => moves,
-            "L" => _logLight.slice(0, n),
-            "S" => _logStage.slice(0, n),
-            "H" => _logHr.slice(0, n)
+            "S" => _logStage.slice(0, n)
         } as Dictionary<String, Object>;
+        if (cnt[STAGE_NODATA] > 0) {
+            r.put("nd", cnt[STAGE_NODATA]);
+        }
         if (hrN > 0) {
             r.put("hrA", (hrSum + hrN / 2) / hrN);
             r.put("hrM", hrMin);
@@ -802,14 +848,15 @@ class SleepEngine {
         return r;
     }
 
-    // Minutes asleep after falling asleep (awake minutes not counted)
+    // Minutes asleep after falling asleep (awake minutes and minutes without data not counted)
     private function sleepMinutes() as Number {
         if (_onset < 0) {
             return 0;
         }
         var n = 0;
         for (var i = _onset; i < epochs; i++) {
-            if (_logStage[i] != STAGE_WAKE) {
+            var s = _logStage[i];
+            if (s == STAGE_DEEP || s == STAGE_LIGHT) {
                 n += 1;
             }
         }
@@ -853,10 +900,12 @@ class SleepEngine {
 
     // ------------------------------------------------------------------ tests
 
-    // Feeds one prepared minute into the analysis (unit tests, debug builds only).
+    // Feeds one prepared minute into the analysis (unit tests and night replay, debug builds only).
+    // hr, st < 0 and rm, rr <= 0 mean "no value".
     (:debug)
-    function injectEpoch(endSec as Number, motion as Float, hr as Number, rm as Float, st as Number, rr as Number) as Void {
+    function injectEpoch(endSec as Number, motion as Float, hr as Number, rm as Float, st as Number, rr as Float) as Void {
         _act = (motion <= 0.0) ? 0.0 : (50.0 * (Math.pow(10.0, 2.5 * motion) - 1.0)).toFloat();
+        _accN = 15;
         if (hr > 0) {
             _hrSum = hr * 60;
             _hrN = 60;
@@ -869,8 +918,8 @@ class SleepEngine {
             _stSum = st * 4;
             _stN = 4;
         }
-        if (rr > 0) {
-            _rrSum = rr * 4;
+        if (rr > 0.0) {
+            _rrSum = (rr * 4.0 + 0.5).toNumber();
             _rrN = 4;
         }
         closeEpoch(endSec);
@@ -879,6 +928,11 @@ class SleepEngine {
     (:debug)
     function cycleEstimate() as Float {
         return (_cycN > 0) ? _cycSum.toFloat() / _cycN : -1.0;
+    }
+
+    (:debug)
+    function lightNow() as Number {
+        return _lastLight;
     }
 
     // ---------------------------------------------------------------- helpers
@@ -971,16 +1025,18 @@ class SleepEngine {
         return 100;
     }
 
-    private function meanAbsDelta(a as Array<Float>) as Float {
+    // Average change from minute to minute over the newest count values,
+    // -1 if fewer than minN changes can be measured.
+    private function meanAbsDelta(a as Array<Float>, count as Number, minN as Number) as Float {
         var sum = 0.0;
         var n = 0;
-        for (var i = 0; i + 1 < a.size(); i++) {
+        for (var i = 0; i + 1 < count && i + 1 < a.size(); i++) {
             if (a[i] >= 0.0 && a[i + 1] >= 0.0) {
                 sum += absf(a[i] - a[i + 1]);
                 n += 1;
             }
         }
-        return (n >= 2) ? sum / n : -1.0;
+        return (n >= minN) ? sum / n : -1.0;
     }
 
     private function stdDev(a as Array<Float>) as Float {

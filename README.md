@@ -16,7 +16,7 @@ Gebaut mit Connect IQ (Monkey C).
    - **Atemfrequenz** und wie gleichmäßig sie ist
    - **dein Schlafzyklus:** wann der nächste Wechsel zwischen zwei Zyklen fällig ist
 3. Jede Minute bewertet sie daraus, wie leicht du gerade schläfst. Alle Werte werden mit **deinen eigenen Normalwerten** verglichen, nicht mit festen Grenzen.
-4. Im **Weckfenster** (z. B. 30 Minuten vor der Weckzeit) weckt sie dich, sobald es nach leichtem Schlaf aussieht. Gegen Ende des Fensters reicht ein schwächeres Signal. Spätestens zur Weckzeit klingelt es immer.
+4. Im **Weckfenster** (z. B. 30 Minuten vor der Weckzeit) weckt sie dich, sobald es nach leichtem Schlaf aussieht. Gegen Ende des Fensters reicht ein schwächeres Signal. Liegst du ganz still, aber der Puls ist erhöht (so sieht Traumschlaf/REM aus), weckt sie nicht allein deshalb, sondern erst bei einer Bewegung. Spätestens zur Weckzeit klingelt es, solange die App läuft (siehe „Wichtig“ unten).
 5. Der Alarm startet sanft und wird stärker: längere Vibrationen, kürzere Pausen und auf Wunsch Töne.
 6. Nach dem Ausschalten fragt die App: **Wie fühlst du dich?** (fit / okay / müde).
 7. Morgens zeigt ein Bericht, wann und warum du geweckt wurdest, deinen Schlafverlauf, Messwerte und den Ablauf der Nacht.
@@ -32,7 +32,12 @@ SmartWake merkt sich die **letzten 21 Nächte** als kurze Zusammenfassungen (kei
 
 Was gelernt wurde, zeigt **Menü → Schlafprofil**. Mit **Lernen zurücksetzen** fängt das Profil von vorne an.
 
-Garmins eigene Schlafphasen sind für Apps nicht zugänglich. SmartWake schätzt die Phasen deshalb selbst. Das ist eine Schätzung, keine medizinische Messung.
+Garmins eigene Schlafphasen sind für Apps nicht zugänglich. SmartWake schätzt die Phasen deshalb selbst. Das ist eine Schätzung, keine medizinische Messung. Die Regeln wurden an einer echten Nacht mit Garmins Phasen abgeglichen:
+
+- **Tief:** keine Bewegung und ein sehr gleichmäßiger Puls über die letzten 8 Minuten.
+- **Wach:** 2 Minuten deutliche Bewegung mit klar erhöhtem Puls oder 4 Minuten Unruhe am Stück. Einmal Umdrehen zählt nicht als wach.
+- **Leicht:** alles andere. REM (Traumschlaf) wird nicht getrennt erkannt und zählt als leicht.
+- **Keine Daten:** Minuten ohne Puls, in denen du still liegst (z. B. Uhr verrutscht). Sie zählen nicht als Schlaf und lösen kein frühes Wecken aus.
 
 ## Bedienung
 
@@ -62,7 +67,8 @@ Garmins eigene Schlafphasen sind für Apps nicht zugänglich. SmartWake schätzt
 
 ## Wichtig in der Testphase
 
-- Stell dir zusätzlich den **normalen Garmin-Wecker** ein paar Minuten nach deiner Weckzeit, bis du der App vertraust.
+- SmartWake klingelt nur, **solange die App läuft**. Wird sie geschlossen oder stürzt sie ab, gibt es keinen Alarm (Connect-IQ-Apps können sich nicht selbst wieder starten). Beim erneuten Öffnen setzt sie die Nacht fort, die Messdaten vor dem Neustart fehlen dann im Bericht.
+- Stell dir deshalb zusätzlich den **normalen Garmin-Wecker** ein paar Minuten nach deiner Weckzeit, bis du der App vertraust.
 - Prüfe morgens in Garmin Connect, ob Garmins Schlafdaten trotzdem vollständig sind. SmartWake zeichnet keine Aktivität auf, damit das Schlaftracking normal weiterläuft.
 - Teste **Wecker testen** einmal mit eingeschaltetem Schlafmodus der Uhr, um sicherzugehen, dass Vibration und Ton durchkommen.
 
@@ -81,15 +87,29 @@ source/
   *View.mc            weitere Bildschirme (Start, Nacht, Alarm, Schlummern, Bericht, Regler ...)
   SettingsMenu.mc     Einstellungsmenü
   Ui.mc, TimeUtil.mc  Farben, Zeichen-Helfer, Zeitfunktionen
-  DebugTools.mc       Demo-Nacht, Demo-Bericht, Demo-Lernen (nur in Debug-Builds)
+  DebugTools.mc       Demo-Nacht, Demo-Bericht, Demo-Lernen, Nacht-Replay (nur in Debug-Builds)
   Tests.mc            Unit-Tests für Zeitlogik, Lernen und Schlaf-Engine
+tools/
+  decode-nightlog.ps1 Nacht-Protokoll in eine Tabelle umwandeln
+  replay-night.ps1    eine aufgezeichnete Nacht erneut durch die Engine laufen lassen
+  sim-*.ps1           Simulator bedienen und Screenshots machen
 ```
 
 ## Tests ausführen
 
 ```
-monkeyc -f monkey.jungle -d fr265 -o bin/SmartWake-test.prg -y <developer_key> --unit-test
+monkeyc -f monkey.jungle -d fr265 -o bin/SmartWake-test.prg -y <developer_key> -w --unit-test
 monkeydo bin/SmartWake-test.prg fr265 /t
 ```
 
 Der Simulator muss dafür laufen.
+
+## Echte Nächte nachrechnen
+
+`tools/replay-night.ps1` spielt eine Nacht aus dem Nacht-Protokoll noch einmal durch die aktuelle Engine und zeigt die Phasen vorher und jetzt, auf Wunsch neben Garmins Phasen. So lassen sich Änderungen prüfen, bevor sie auf die Uhr kommen. Die Nachtdaten landen dabei nur im (nicht hochgeladenen) Ordner `logs/`.
+
+```
+tools/replay-night.ps1 -Files <BAK>,<TXT> -Garmin <garmin-stages.txt> -Key <developer_key>
+```
+
+Mit `-Sweep` probiert es eine Weckzeit alle 10 Minuten aus und listet, in welcher Garmin-Phase geweckt würde.

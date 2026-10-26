@@ -1,1 +1,4 @@
 project.manifest = manifest.xml
+# Only the app code. Without this line every .mc file in the project would be built,
+# also the generated night replay in logs/replay (private data).
+base.sourcePath = source

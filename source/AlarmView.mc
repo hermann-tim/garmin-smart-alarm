@@ -16,6 +16,14 @@ class AlarmView extends WatchUi.View {
         _test = test;
     }
 
+    // The test alarm stops as soon as its screen is left in any way. The real alarm
+    // keeps ringing (a notification on top must not silence it).
+    function onHide() as Void {
+        if (_test && _p.running) {
+            _p.stop();
+        }
+    }
+
     function onUpdate(dc as Dc) as Void {
         Ui.clear(dc);
         var cx = dc.getWidth() / 2;

@@ -3,7 +3,8 @@ param(
     [string]$CsvOut = ""
 )
 # Decodes SmartWake night protocol lines ("SW D<min>:...") into minute rows.
-# 7 chars per minute: movement, pulse, HRV, stress, breathing, score, stage.
+# 7 chars per minute: movement, pulse, HRV, stress, breathing, score, stage
+# (stage: tief, leicht, wach, keine = no pulse data).
 $alphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz-_"
 function Dec([char]$c) { if ($c -eq '.') { return $null }; return $alphabet.IndexOf($c) }
 
@@ -29,7 +30,7 @@ foreach ($line in $lines) {
                 stress = $(if ($null -ne $st) { $st * 2 } else { $null })
                 breath = $(if ($null -ne $rr) { [math]::Round(4 + $rr / 4, 2) } else { $null })
                 score  = [math]::Round($sc * 100 / 63)
-                stage  = @('tief', 'leicht', 'wach')[$sg]
+                stage  = @('tief', 'leicht', 'wach', 'keine')[$sg]
             }
         }
     }

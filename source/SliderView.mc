@@ -55,6 +55,11 @@ class SliderView extends WatchUi.View {
         while (along >= 360.0) {
             along -= 360.0;
         }
+        // The gap at the bottom between both ends: a tap close to an end snaps to it,
+        // a tap in the middle of the gap is ignored (no jump to min or max).
+        if (along > 285.0 && along < 345.0) {
+            return true;
+        }
         if (along > 270.0) {
             along = (along < 315.0) ? 270.0 : 0.0;
         }
