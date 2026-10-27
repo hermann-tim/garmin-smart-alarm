@@ -481,6 +481,21 @@ function testEngineReportKeepsOnlyStages(logger as Test.Logger) as Boolean {
 
 // ---------------------------------------------------------------- session
 
+// The watch may close the app during the night (e.g. Garmin's morning report). Closing
+// must keep the measured minutes in the protocol and must not crash.
+(:test)
+function testShutdownKeepsNightData(logger as Test.Logger) as Boolean {
+    var e = new SleepEngine(freshModel());
+    var t0 = 1700000000;
+    e.setup(t0, t0 + 600 * 60, t0 + 630 * 60, 3);
+    feed(e, t0, 0, 90, 0.0, 52);
+    var s = new NightSession(new AppSettings());
+    s.engine = e;
+    s.shutdown();
+    Test.assertEqual(e.epochs, 90);
+    return true;
+}
+
 // First opinion: an alarm that rings again after snoozing was thrown away after a restart.
 (:test)
 function testRestoreAlarmAfterSnooze(logger as Test.Logger) as Boolean {

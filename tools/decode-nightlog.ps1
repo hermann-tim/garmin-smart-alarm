@@ -15,7 +15,7 @@ $nights = 0
 foreach ($line in $lines) {
     $l = $line.Trim()
     if ($l -match '^SW START') { $nights++ }
-    if ($l -match '^SW (START|MODEL|RESTART|RING|CYC|WAKE|LEARN|SNOOZE|OFF|FEEL|CANCEL)') { "[night $nights] $l" }
+    if ($l -match '^SW (START|MODEL|RESTART|RING|CYC|WAKE|LEARN|SNOOZE|OFF|FEEL|CANCEL|STOP|LATE)') { "[night $nights] $l" }
     if ($l -match '^SW D(\d+):(.*)$') {
         $start = [int]$Matches[1]; $data = $Matches[2]
         for ($i = 0; $i + 7 -le $data.Length; $i += 7) {

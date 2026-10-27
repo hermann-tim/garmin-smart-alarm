@@ -105,6 +105,7 @@ class NightSession {
                 reasonKind = REASON_DEADLINE;
                 reasonText = "Weckzeit erreicht";
                 log(now, reasonText);
+                NightLog.write("LATE t=" + now + " dl=" + deadline);
                 persist();
                 keepReport(minimalReport(now, reasonKind, reasonText));
                 return true;
@@ -303,13 +304,17 @@ class NightSession {
         WatchUi.switchToView(home, new HomeDelegate(home), WatchUi.SLIDE_DOWN);
     }
 
-    // The app closes: stop the hardware, keep the stored state for a restart.
+    // The app closes (also when the watch closes it, e.g. for Garmin's morning report):
+    // stop the hardware, keep the stored state for a restart. The night protocol notes
+    // when this happened and keeps the minutes measured so far, which would be lost otherwise.
     function shutdown() as Void {
         _timer.stop();
         player.stop();
+        NightLog.write("STOP t=" + TimeUtil.nowSec() + " ph=" + phase);
         var e = engine;
         if (e != null) {
             e.stop();
+            e.writeLog();
         }
     }
 

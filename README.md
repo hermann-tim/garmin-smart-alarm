@@ -69,6 +69,7 @@ Garmins eigene Schlafphasen sind für Apps nicht zugänglich. SmartWake schätzt
 
 - SmartWake klingelt nur, **solange die App läuft**. Wird sie geschlossen oder stürzt sie ab, gibt es keinen Alarm (Connect-IQ-Apps können sich nicht selbst wieder starten). Beim erneuten Öffnen setzt sie die Nacht fort, die Messdaten vor dem Neustart fehlen dann im Bericht.
 - Stell dir deshalb zusätzlich den **normalen Garmin-Wecker** ein paar Minuten nach deiner Weckzeit, bis du der App vertraust.
+- Schalte Garmins **Morgenbericht** aus (UP halten → Darstellung → Morgenbericht → Bericht anzeigen). Er erscheint, sobald die Uhr dich als wach erkennt, und schließt dabei die laufende App.
 - Prüfe morgens in Garmin Connect, ob Garmins Schlafdaten trotzdem vollständig sind. SmartWake zeichnet keine Aktivität auf, damit das Schlaftracking normal weiterläuft.
 - Teste **Wecker testen** einmal mit eingeschaltetem Schlafmodus der Uhr, um sicherzugehen, dass Vibration und Ton durchkommen.
 

@@ -38,6 +38,7 @@ monkeydo bin/SmartWake-test.prg fr265 /t                                        
 - Modules cannot use `private`.
 - `monkey.jungle` must keep `base.sourcePath = source`: the default builds every `.mc` file in the project, including the generated replay with private night data in `logs/replay`.
 - In `ring()` the alarm starts first; report, learning and storage come after. Storage writes are wrapped in try/catch (a full storage throws), so they can never stop the alarm.
+- Garmin's morning report (shown when the watch detects waking up) most likely closes the running app, so it should be off. `NightSession.shutdown()` (onStop) writes `STOP t=...` and the minutes measured so far into the night protocol; reopening after the wake time writes `LATE`. Relaunching via `monkeydo` kills the simulator app without onStop, so test the shutdown path with the unit test.
 - The simulator uses one fixed UTC offset all year (no daylight saving time), so DST logic cannot be tested there.
 - Windows PowerShell 5.1: no double quotes inside here-string commit messages; do not rewrite source files with `Set-Content` (adds a BOM) – use the edit tools.
 
