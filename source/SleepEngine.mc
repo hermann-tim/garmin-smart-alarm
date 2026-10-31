@@ -3,6 +3,7 @@ import Toybox.Lang;
 import Toybox.Math;
 import Toybox.Sensor;
 import Toybox.SensorHistory;
+import Toybox.StringUtil;
 
 // Our own sleep stage estimate (Garmin's stages are not available to apps).
 // REM sleep is not told apart and counts as light sleep.
@@ -707,38 +708,71 @@ class SleepEngine {
 
     // Writes the whole night into the protocol (see NightLog). One line per hour,
     // seven characters per minute: movement, pulse, HRV, stress, breathing, score, stage.
+    // The watch stops an app whose callback computes too long, so after the alarm the
+    // lines are written one per timer tick (NightSession); this is for the other cases.
     function writeLog() as Void {
         if (!NightLog.ENABLED) {
             return;
         }
+        NightLog.write(logHeader());
+        for (var k = 0; k < logLineCount(); k++) {
+            NightLog.write(logLine(k));
+        }
+        NightLog.write(logFooter());
+    }
+
+    function logHeader() as String {
         var b = "";
         for (var i = 0; i < _bounds.size(); i++) {
             b += ((i > 0) ? "," : "") + _bounds[i];
         }
-        NightLog.write("CYC onset=" + _onset + " n=" + _cycN + " sum=" + _cycSum + " b=" + b);
-        var i = 0;
-        while (i < epochs) {
-            var end = (i + 60 < epochs) ? i + 60 : epochs;
-            var line = "D" + i + ":";
-            for (var j = i; j < end; j++) {
-                line += NightLog.enc(_logMove[j] * 63 / 100);
-                line += (_logHr[j] > 0) ? NightLog.enc(_logHr[j] - 30) : ".";
-                line += (_logRm[j] > 0) ? NightLog.enc(_logRm[j] / 3) : ".";
-                line += (_logSt[j] >= 0) ? NightLog.enc(_logSt[j] / 2) : ".";
-                line += (_logRr[j] > 0) ? NightLog.enc((_logRr[j] - 40) * 4 / 10) : ".";
-                line += NightLog.enc(_logLight[j] * 63 / 100);
-                line += NightLog.enc(_logStage[j]);
-            }
-            NightLog.write(line);
-            i = end;
+        return "CYC onset=" + _onset + " n=" + _cycN + " sum=" + _cycSum + " b=" + b;
+    }
+
+    function logLineCount() as Number {
+        return (epochs + 59) / 60;
+    }
+
+    // Line k = minutes k*60 .. k*60+59, built as a character array (much cheaper
+    // than adding up a string character by character).
+    function logLine(k as Number) as String {
+        var i = k * 60;
+        var end = (i + 60 < epochs) ? i + 60 : epochs;
+        if (end <= i) {
+            return "D" + i + ":";
         }
+        var abc = NightLog.ALPHABET.toCharArray();
+        var out = new Array<Char>[(end - i) * 7];
+        var p = 0;
+        for (var j = i; j < end; j++) {
+            out[p] = encChar(abc, _logMove[j] * 63 / 100);
+            out[p + 1] = (_logHr[j] > 0) ? encChar(abc, _logHr[j] - 30) : '.';
+            out[p + 2] = (_logRm[j] > 0) ? encChar(abc, _logRm[j] / 3) : '.';
+            out[p + 3] = (_logSt[j] >= 0) ? encChar(abc, _logSt[j] / 2) : '.';
+            out[p + 4] = (_logRr[j] > 0) ? encChar(abc, (_logRr[j] - 40) * 4 / 10) : '.';
+            out[p + 5] = encChar(abc, _logLight[j] * 63 / 100);
+            out[p + 6] = encChar(abc, _logStage[j]);
+            p += 7;
+        }
+        return "D" + i + ":" + StringUtil.charArrayToString(out);
+    }
+
+    function logFooter() as String {
         var wc = _wakeComps;
         var c = (wc != null) ? wc : _lastComps;
         var cs = "";
         for (var k = 0; k < COMP_COUNT; k++) {
             cs += ((k > 0) ? "," : "") + (c[k] * 100.0).toNumber();
         }
-        NightLog.write("WAKE " + _wakeInfo + " c=" + cs + " noise=" + _noise.toNumber() + " rate=" + _rate);
+        return "WAKE " + _wakeInfo + " c=" + cs + " noise=" + _noise.toNumber() + " rate=" + _rate;
+    }
+
+    // Same as NightLog.enc, as one character: 0..63, capped above, "." below 0
+    private function encChar(abc as Array<Char>, v as Number) as Char {
+        if (v < 0) {
+            return '.';
+        }
+        return abc[(v > 63) ? 63 : v];
     }
 
     // ----------------------------------------------------------------- report
@@ -923,6 +957,46 @@ class SleepEngine {
             _rrN = 4;
         }
         closeEpoch(endSec);
+    }
+
+    // Fills the minute log with n made-up minutes (debug menu "Demo-Lange-Nacht"), so the
+    // alarm of a long night can be tried in the simulator without waiting all night.
+    (:debug)
+    function fillDemoLog(n as Number) as Void {
+        if (n > MAX_EPOCHS) {
+            n = MAX_EPOCHS;
+        }
+        for (var i = 0; i < n; i++) {
+            _logMove[i] = (i % 7 == 0) ? 80 : 0;
+            _logHr[i] = 55 + i % 9;
+            _logRm[i] = 40 + i % 30;
+            _logSt[i] = (i % 11 == 0) ? -1 : i % 25;
+            _logRr[i] = (i % 13 == 0) ? 0 : 130 + i % 30;
+            _logLight[i] = (i * 7) % 100;
+            _logStage[i] = i % 4;
+        }
+        epochs = n;
+        _onset = 10;
+        _epochStart = TimeUtil.nowSec();
+    }
+
+    // The former way of building a protocol line (string by string), for the test
+    // that the faster logLine() writes exactly the same.
+    (:debug)
+    function logLineOld(k as Number) as String {
+        var i = k * 60;
+        var end = (i + 60 < epochs) ? i + 60 : epochs;
+        var line = "D" + i + ":";
+        for (var j = i; j < end; j++) {
+            line += NightLog.enc(_logMove[j] * 63 / 100);
+            line += (_logHr[j] > 0) ? NightLog.enc(_logHr[j] - 30) : ".";
+            line += (_logRm[j] > 0) ? NightLog.enc(_logRm[j] / 3) : ".";
+            line += (_logSt[j] >= 0) ? NightLog.enc(_logSt[j] / 2) : ".";
+            line += (_logRr[j] > 0) ? NightLog.enc((_logRr[j] - 40) * 4 / 10) : ".";
+            line += NightLog.enc(_logLight[j] * 63 / 100);
+            line += NightLog.enc(_logStage[j]);
+        }
+        return line;
     }
 
     (:debug)

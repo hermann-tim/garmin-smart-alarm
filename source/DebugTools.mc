@@ -11,6 +11,7 @@ function addDebugItems(menu as WatchUi.Menu2) as Void {
     menu.addItem(new WatchUi.MenuItem("Demo-Nacht", "Weckt in 2 Minuten", :demoNight, null));
     menu.addItem(new WatchUi.MenuItem("Demo-Bericht", "Beispieldaten anzeigen", :demoReport, null));
     menu.addItem(new WatchUi.MenuItem("Demo-Lernen", "8 Beispielnächte lernen", :demoLearn, null));
+    menu.addItem(new WatchUi.MenuItem("Demo-Lange-Nacht", "900 min, Wecker in 1 min", :demoLong, null));
 }
 
 (:release)
@@ -24,6 +25,15 @@ function handleDebugItem(id as Object) as Void {
         var session = new NightSession(app.settings);
         app.session = session;
         session.begin(TimeUtil.nowSec() + 120);
+        WatchUi.popView(WatchUi.SLIDE_IMMEDIATE);
+        WatchUi.switchToView(new NightView(session), new NightDelegate(session), WatchUi.SLIDE_UP);
+    } else if (id == :demoLong) {
+        // The longest night the engine keeps (15 hours), alarm in one minute.
+        var app = getApp();
+        var session = new NightSession(app.settings);
+        app.session = session;
+        session.begin(TimeUtil.nowSec() + 60);
+        session.fillDemoNight(900);
         WatchUi.popView(WatchUi.SLIDE_IMMEDIATE);
         WatchUi.switchToView(new NightView(session), new NightDelegate(session), WatchUi.SLIDE_UP);
     } else if (id == :demoReport) {

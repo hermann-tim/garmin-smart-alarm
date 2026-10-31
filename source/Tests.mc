@@ -496,6 +496,24 @@ function testShutdownKeepsNightData(logger as Test.Logger) as Boolean {
     return true;
 }
 
+// The faster protocol lines (character array) must be exactly the same as before,
+// including missing values, and a 15-hour night gives 15 lines.
+(:test)
+function testLogLineSameAsBefore(logger as Test.Logger) as Boolean {
+    var e = new SleepEngine(freshModel());
+    e.setup(1700000000, 1700000000 + 600 * 60, 1700000000 + 630 * 60, 3);
+    e.fillDemoLog(130);
+    Test.assertEqual(e.logLineCount(), 3);
+    for (var k = 0; k < 3; k++) {
+        Test.assertEqual(e.logLine(k), e.logLineOld(k));
+    }
+    Test.assertEqual(e.logLine(2).length(), "D120:".length() + 10 * 7);
+    e.fillDemoLog(900);
+    Test.assertEqual(e.logLineCount(), 15);
+    Test.assertEqual(e.logLine(14), e.logLineOld(14));
+    return true;
+}
+
 // First opinion: an alarm that rings again after snoozing was thrown away after a restart.
 (:test)
 function testRestoreAlarmAfterSnooze(logger as Test.Logger) as Boolean {

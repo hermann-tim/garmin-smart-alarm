@@ -33,6 +33,13 @@ class NightSession {
     private var _events as Array<String> = [] as Array<String>;
     private var _report as Dictionary or Null = null;
 
+    // After the alarm: the night whose report, learning and protocol are still being
+    // written, one small step per timer tick (see finishStep).
+    private var _done as SleepEngine or Null = null;
+    private var _step as Number = 0;
+    private var _learnStatus as Number = LEARN_NONE;
+    private var _ended as Boolean = false;    // alarm switched off, only protocol lines are left
+
     function initialize(settings as AppSettings) {
         _settings = settings;
         _timer = new Timer.Timer();
@@ -154,7 +161,23 @@ class NightSession {
     }
 
     function onTick() as Void {
+        if (_done != null) {
+            finishStep();
+        }
+        if (_ended) {
+            if (_done == null) {
+                _timer.stop();
+            }
+            return;
+        }
         var now = TimeUtil.nowSec();
+        if (phase == PHASE_ALARM) {
+            // While ringing the timer only writes the rest of the night (the alarm has its own timer).
+            if (_done == null) {
+                _timer.stop();
+            }
+            return;
+        }
         if (phase == PHASE_TRACK) {
             var e = engine;
             if (e != null) {
@@ -199,31 +222,73 @@ class NightSession {
         WatchUi.switchToView(new AlarmView(self, player, false), new AlarmDelegate(self), WatchUi.SLIDE_IMMEDIATE);
         persist();
 
-        // Then the morning report and the learning.
+        // Then the morning report, the learning and the night protocol. For a long night
+        // that is a lot of computing, and the watch stops an app whose callback runs too
+        // long, alarm included (that happened after a long night). So it is
+        // done in small steps on the next timer ticks while the alarm is already ringing.
         var e = engine;
         engine = null;
-        var status = LEARN_NONE;
-        var r = (e != null) ? e.report(now, kind, text) : minimalReport(now, kind, text);
         if (e != null) {
             e.stop();
-            // Learn this night's values right away (the morning answer follows later).
-            status = getApp().model.learnNight(e.learningSummary(now, kind));
-            r.put("ls", status);
-            r.put("lk", now);
+            _done = e;
+            _step = 0;
+            _timer.start(method(:onTick), 250, true);
+        } else {
+            keepReport(minimalReport(now, kind, text));
+            NightLog.write("RING t=" + now + " kind=" + kind + " " + text);
         }
-        keepReport(r);
+    }
 
-        // Night protocol last.
-        NightLog.write("RING t=" + now + " kind=" + kind + " " + text);
-        if (e != null) {
-            e.writeLog();
-            NightLog.write("LEARN status=" + status + " " + getApp().model.describe());
+    // One step of the work after the alarm: 0 = report, 1 = learning, then the night
+    // protocol line by line. Report and learning come first, the morning question needs them.
+    private function finishStep() as Void {
+        var e = _done;
+        if (e == null) {
+            return;
+        }
+        if (_step == 0) {
+            keepReport(e.report(alarmAt, reasonKind, reasonText));
+        } else if (_step == 1) {
+            // Learn this night's values right away (the morning answer follows later).
+            _learnStatus = getApp().model.learnNight(e.learningSummary(alarmAt, reasonKind));
+            var r = _report;
+            if (r != null) {
+                r.put("ls", _learnStatus);
+                r.put("lk", alarmAt);
+                storeReport(r);
+            }
+        } else if (_step == 2) {
+            NightLog.write("RING t=" + alarmAt + " kind=" + reasonKind + " " + reasonText);
+            if (NightLog.ENABLED) {
+                NightLog.write(e.logHeader());
+            }
+        } else if (_step - 3 < e.logLineCount()) {
+            if (NightLog.ENABLED) {
+                NightLog.write(e.logLine(_step - 3));
+            }
+        } else {
+            if (NightLog.ENABLED) {
+                NightLog.write(e.logFooter());
+            }
+            NightLog.write("LEARN status=" + _learnStatus + " " + getApp().model.describe());
+            _done = null;
+        }
+        _step += 1;
+    }
+
+    // Report and learning must be done before the morning question (or before the app closes).
+    private function finishEssentials() as Void {
+        while (_done != null && _step < 2) {
+            finishStep();
         }
     }
 
     private function ringAgain() as Void {
         var now = TimeUtil.nowSec();
         _timer.stop();
+        if (_done != null) {
+            _timer.start(method(:onTick), 250, true);   // rest of the night protocol
+        }
         phase = PHASE_ALARM;
         ringAt = now;
         log(now, "Alarm erneut");
@@ -271,6 +336,12 @@ class NightSession {
         var now = TimeUtil.nowSec();
         player.stop();
         _timer.stop();
+        finishEssentials();
+        if (_done != null) {
+            // Only protocol lines are left: keep writing them in the background.
+            _ended = true;
+            _timer.start(method(:onTick), 250, true);
+        }
         log(now, "Wecker aus");
         NightLog.write("OFF t=" + now + " snoozes=" + snoozeCount);
         var r = finishReport(now);
@@ -315,6 +386,20 @@ class NightSession {
         if (e != null) {
             e.stop();
             e.writeLog();
+        }
+        // Closed right after the alarm: finish the report, learning and protocol now.
+        finishEssentials();
+        while (_done != null) {
+            finishStep();
+        }
+    }
+
+    // Debug menu "Demo-Lange-Nacht": pretend n minutes were already measured.
+    (:debug)
+    function fillDemoNight(n as Number) as Void {
+        var e = engine;
+        if (e != null) {
+            e.fillDemoLog(n);
         }
     }
 

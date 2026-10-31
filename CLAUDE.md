@@ -16,7 +16,7 @@ monkeydo bin/SmartWake-test.prg fr265 /t                                        
 - Start the simulator with `simulator.exe` from the SDK `bin` folder, then `monkeydo <prg> fr265`. One test only: `monkeydo <prg> fr265 /t <testName>`.
 - Replay a real night through the current engine (simulator must be able to start): `tools/replay-night.ps1 -Files <BAK>,<TXT> [-Garmin <stages.txt>] -Key <key> [-Model "<MODEL line>"] [-DeadlineMinute n] [-Sweep]`. It writes the night into `logs/replay` (git-ignored) and builds with its own jungle. Garmin's stages per minute: text file `from to stage` (tief/leicht/rem/wach), minutes counted from the SmartWake start like the D lines.
 - `tools/sim-screenshot.ps1 -Out x.png` captures the simulator window; `tools/sim-click.ps1 -Button enter|up|down|esc|menu|tap -X -Y` presses buttons/taps without moving the mouse (device image is drawn 1:1). Holding UP does not work via the tool; tap the lower screen area on the start screen to open the menu instead.
-- Debug builds have extra menu items: Demo-Nacht (alarm in 2 min), Demo-Bericht, Demo-Lernen (`DebugTools.mc`).
+- Debug builds have extra menu items: Demo-Nacht (alarm in 2 min), Demo-Bericht, Demo-Lernen, Demo-Lange-Nacht (900 measured minutes, alarm in 1 min) (`DebugTools.mc`). The menu wraps around: UP on the first item jumps to the last one.
 - Type-check warnings at `-l 2/3` about Dictionary/Storage types are known formalities; the default level must stay warning-free.
 
 ## Code map (`source/`)
@@ -37,7 +37,7 @@ monkeydo bin/SmartWake-test.prg fr265 /t                                        
 - `(:test)` is only for test functions (`function x(logger as Test.Logger) as Boolean`); test helpers are `(:debug)`.
 - Modules cannot use `private`.
 - `monkey.jungle` must keep `base.sourcePath = source`: the default builds every `.mc` file in the project, including the generated replay with private night data in `logs/replay`.
-- In `ring()` the alarm starts first; report, learning and storage come after. Storage writes are wrapped in try/catch (a full storage throws), so they can never stop the alarm.
+- In `ring()` the alarm starts first; report, learning and the night protocol follow in small steps on the next timer ticks (`NightSession.finishStep`). Doing them in one callback tripped the watchdog ("Code Executed Too Long") after a long night and killed the alarm. Keep every callback small; the debug menu item "Demo-Lange-Nacht" (900 minutes, alarm after 1 min) checks this in the simulator. Storage writes are wrapped in try/catch (a full storage throws).
 - Garmin's morning report (shown when the watch detects waking up) most likely closes the running app, so it should be off. `NightSession.shutdown()` (onStop) writes `STOP t=...` and the minutes measured so far into the night protocol; reopening after the wake time writes `LATE`. Relaunching via `monkeydo` kills the simulator app without onStop, so test the shutdown path with the unit test.
 - The simulator uses one fixed UTC offset all year (no daylight saving time), so DST logic cannot be tested there.
 - Windows PowerShell 5.1: no double quotes inside here-string commit messages; do not rewrite source files with `Set-Content` (adds a BOM) – use the edit tools.
